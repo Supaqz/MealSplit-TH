@@ -3,117 +3,273 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MealSplit TH - ระบบหารค่าข้าว</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <title>MealSplit TH - ระบบหารค่าข้าวและหักลบหนี้</title>
+  <!-- โหลด React และ Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- โหลด Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;600;700&display=swap" rel="stylesheet">
-  <style> body { font-family: 'Prompt', sans-serif; } </style>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style> body { font-family: 'Prompt', sans-serif; background-color: #f8fafc; } </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
+<body>
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useMemo } = React;
 
     function App() {
-      const [friends, setFriends] = useState(() => JSON.parse(localStorage.getItem('ms_friends')) || []);
-      const [meals, setMeals] = useState(() => JSON.parse(localStorage.getItem('ms_meals')) || []);
+      const [activeTab, setActiveTab] = useState('meals');
+      const [friends, setFriends] = useState(() => JSON.parse(localStorage.getItem('ms_friends_v2')) || []);
+      const [meals, setMeals] = useState(() => JSON.parse(localStorage.getItem('ms_meals_v2')) || []);
 
-      useEffect(() => {
-        localStorage.setItem('ms_friends', JSON.stringify(friends));
-      }, [friends]);
+      // บันทึกข้อมูลเมื่อมีการเปลี่ยนแปลง
+      useEffect(() => { localStorage.setItem('ms_friends_v2', JSON.stringify(friends)); }, [friends]);
+      useEffect(() => { localStorage.setItem('ms_meals_v2', JSON.stringify(meals)); }, [meals]);
 
-      useEffect(() => {
-        localStorage.setItem('ms_meals', JSON.stringify(meals));
-      }, [meals]);
-
+      // จัดการเพื่อน
       const handleAddFriend = (e) => {
         e.preventDefault();
         const name = e.target.name.value.trim();
         const promptPay = e.target.promptPay.value.trim();
         if (name) {
-          setFriends([...friends, { id: Date.now().toString(), name, promptPay }]);
+          setFriends([...friends, { id: 'f_' + Date.now(), name, promptPay, color: `bg-${['indigo','emerald','rose','amber','purple'][friends.length % 5]}-500` }]);
           e.target.reset();
         }
       };
+      const deleteFriend = (id) => {
+        setFriends(friends.filter(f => f.id !== id));
+        setMeals(meals.filter(m => m.payerId !== id && !m.participantIds.includes(id)));
+      };
 
+      // จัดการมื้ออาหาร
       const handleAddMeal = (e) => {
         e.preventDefault();
         const title = e.target.title.value.trim();
         const amount = parseFloat(e.target.amount.value);
         const payerId = e.target.payerId.value;
-        if (title && amount && payerId) {
-          setMeals([...meals, { 
-            id: Date.now().toString(), 
-            title, 
-            amount, 
-            payerId, 
-            date: new Date().toLocaleDateString('th-TH') 
-          }]);
+        // ดึงคนที่เลือกหาร
+        const participantIds = Array.from(e.target.participants)
+                                    .filter(cb => cb.checked)
+                                    .map(cb => cb.value);
+        
+        if (title && amount && payerId && participantIds.length > 0) {
+          setMeals([{ 
+            id: 'm_' + Date.now(), title, amount, payerId, participantIds, date: new Date().toLocaleDateString('th-TH') 
+          }, ...meals]);
           e.target.reset();
+        } else {
+          alert('กรุณากรอกข้อมูลให้ครบ และเลือกผู้ร่วมหารอย่างน้อย 1 คน');
+        }
+      };
+      const deleteMeal = (id) => setMeals(meals.filter(m => m.id !== id));
+
+      // อัลกอริทึมคำนวณหักลบหนี้
+      const settlement = useMemo(() => {
+        const balances = {};
+        friends.forEach(f => balances[f.id] = { ...f, net: 0 });
+        
+        meals.forEach(m => {
+          if(!balances[m.payerId]) return;
+          balances[m.payerId].net += Number(m.amount); // คนจ่ายได้บวก
+          const splitAmount = Number(m.amount) / m.participantIds.length;
+          m.participantIds.forEach(pid => {
+            if(balances[pid]) balances[pid].net -= splitAmount; // คนกินโดนลบ
+          });
+        });
+
+        let debtors = [];
+        let creditors = [];
+        Object.values(balances).forEach(b => {
+          if (b.net < -0.01) debtors.push({ ...b, amount: Math.abs(b.net) });
+          else if (b.net > 0.01) creditors.push({ ...b, amount: b.net });
+        });
+
+        debtors.sort((a, b) => b.amount - a.amount);
+        creditors.sort((a, b) => b.amount - a.amount);
+
+        const transfers = [];
+        let d = 0, c = 0;
+        while (d < debtors.length && c < creditors.length) {
+          const debtor = debtors[d];
+          const creditor = creditors[c];
+          const min = Math.min(debtor.amount, creditor.amount);
+          
+          transfers.push({
+            from: debtor.name, to: creditor.name,
+            amount: min, promptPay: creditor.promptPay
+          });
+
+          debtor.amount -= min;
+          creditor.amount -= min;
+          if (debtor.amount < 0.01) d++;
+          if (creditor.amount < 0.01) c++;
+        }
+        return transfers;
+      }, [friends, meals]);
+
+      // ล้างข้อมูลทั้งหมด
+      const clearAllData = () => {
+        if(confirm('คุณแน่ใจหรือไม่ที่จะล้างประวัติบิลทั้งหมด? (รายชื่อเพื่อนจะยังอยู่)')) {
+          setMeals([]);
         }
       };
 
-      const deleteMeal = (id) => setMeals(meals.filter(m => m.id !== id));
-      const deleteFriend = (id) => setFriends(friends.filter(f => f.id !== id));
-
       return (
-        <div className="max-w-md mx-auto p-4 space-y-6">
-          <header className="text-center py-4">
-            <h1 className="text-2xl font-bold text-indigo-600">MealSplit TH</h1>
-            <p className="text-sm text-slate-500">ระบบบันทึกบิลและหารค่าข้าว</p>
-          </header>
-
-          <section className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="font-bold mb-3 text-slate-700">👥 จัดการรายชื่อเพื่อน</h2>
-            <form onSubmit={handleAddFriend} className="space-y-3 mb-4">
-              <input name="name" placeholder="ชื่อเพื่อน" className="w-full p-2 border border-slate-300 rounded-lg text-sm" required />
-              <input name="promptPay" placeholder="พร้อมเพย์ (ถ้ามี)" className="w-full p-2 border border-slate-300 rounded-lg text-sm" />
-              <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-indigo-700 transition">เพิ่มเพื่อน</button>
-            </form>
-            <div className="space-y-2">
-              {friends.map(f => (
-                <div key={f.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg text-sm">
-                  <span><span className="font-semibold">{f.name}</span> {f.promptPay && <span className="text-xs text-slate-400">({f.promptPay})</span>}</span>
-                  <button onClick={() => deleteFriend(f.id)} className="text-rose-500 font-bold px-2">X</button>
-                </div>
-              ))}
+        <div className="max-w-xl mx-auto min-h-screen flex flex-col bg-slate-100 sm:py-6">
+          <div className="bg-white sm:rounded-3xl shadow-xl overflow-hidden flex-1 border border-slate-200">
+            {/* Header */}
+            <div className="bg-indigo-600 p-6 text-white text-center">
+              <h1 className="text-2xl font-bold tracking-tight">MealSplit TH 🍽️</h1>
+              <p className="text-indigo-200 text-sm mt-1">ระบบหารค่าข้าว & หักลบหนี้อัตโนมัติ</p>
             </div>
-          </section>
 
-          <section className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="font-bold mb-3 text-slate-700">🍽️ บันทึกมื้ออาหาร</h2>
-            <form onSubmit={handleAddMeal} className="space-y-3 mb-4">
-              <input name="title" placeholder="ชื่อรายการ (เช่น ชาบูหม่าล่า)" className="w-full p-2 border border-slate-300 rounded-lg text-sm" required />
-              <input name="amount" type="number" step="0.01" placeholder="ยอดรวมทั้งหมด (บาท)" className="w-full p-2 border border-slate-300 rounded-lg text-sm" required />
-              <select name="payerId" className="w-full p-2 border border-slate-300 rounded-lg text-sm" required>
-                <option value="">-- ใครเป็นคนจ่าย? --</option>
-                {friends.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-              </select>
-              <button type="submit" disabled={friends.length === 0} className="w-full bg-emerald-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-emerald-700 transition disabled:opacity-50">
-                {friends.length === 0 ? 'กรุณาเพิ่มเพื่อนก่อน' : 'บันทึกบิล'}
-              </button>
-            </form>
-            <div className="space-y-2">
-              {meals.map(m => {
-                const payer = friends.find(f => f.id === m.payerId);
-                return (
-                  <div key={m.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
-                    <div>
-                      <p className="font-bold text-sm">{m.title}</p>
-                      <p className="text-xs text-slate-500">จ่ายโดย: {payer ? payer.name : 'ลบไปแล้ว'} • {m.date}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono font-bold text-rose-600">{m.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</p>
-                      <button onClick={() => deleteMeal(m.id)} className="text-[10px] text-slate-400 hover:text-rose-500 underline">ลบรายการ</button>
-                    </div>
+            {/* Tabs */}
+            <div className="flex border-b border-slate-200 bg-slate-50">
+              <button onClick={() => setActiveTab('meals')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'meals' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-white' : 'text-slate-500 hover:text-slate-700'}`}>บิลค่าอาหาร</button>
+              <button onClick={() => setActiveTab('friends')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'friends' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-white' : 'text-slate-500 hover:text-slate-700'}`}>เพื่อน ({friends.length})</button>
+              <button onClick={() => setActiveTab('settle')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'settle' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-white' : 'text-slate-500 hover:text-slate-700'}`}>เคลียร์ยอด</button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6">
+              {activeTab === 'friends' && (
+                <div className="animate-fade-in">
+                  <form onSubmit={handleAddFriend} className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 space-y-3">
+                    <h2 className="font-bold text-slate-700 text-sm">➕ เพิ่มเพื่อนใหม่</h2>
+                    <input name="name" placeholder="ชื่อเพื่อน *" className="w-full p-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" required />
+                    <input name="promptPay" placeholder="เบอร์พร้อมเพย์ (ใส่หรือไม่ใส่ก็ได้)" className="w-full p-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-mono" />
+                    <button className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition">บันทึก</button>
+                  </form>
+                  <div className="space-y-2">
+                    {friends.map(f => (
+                      <div key={f.id} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl hover:border-indigo-300 transition">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center font-bold text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                          <div>
+                            <p className="font-bold text-sm text-slate-800">{f.name}</p>
+                            {f.promptPay && <p className="text-[11px] text-slate-500 font-mono">พร้อมเพย์: {f.promptPay}</p>}
+                          </div>
+                        </div>
+                        <button onClick={() => deleteFriend(f.id)} className="text-rose-500 bg-rose-50 p-2 rounded-lg text-xs font-bold hover:bg-rose-100 transition">ลบ</button>
+                      </div>
+                    ))}
+                    {friends.length === 0 && <p className="text-center text-slate-400 text-sm py-4">ยังไม่มีรายชื่อเพื่อน</p>}
                   </div>
-                );
-              })}
+                </div>
+              )}
+
+              {activeTab === 'meals' && (
+                <div className="animate-fade-in">
+                  <form onSubmit={handleAddMeal} className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6 space-y-3">
+                    <h2 className="font-bold text-indigo-900 text-sm">📝 บันทึกมื้อใหม่</h2>
+                    <input name="title" placeholder="ชื่อรายการ (เช่น ชาบูหม่าล่า) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm" required />
+                    <input name="amount" type="number" step="0.01" placeholder="ยอดรวมทั้งหมด (บาท) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm" required />
+                    
+                    <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-100">
+                      <p className="text-xs font-bold text-slate-700 mb-2">💸 ใครเป็นคนจ่ายเงิน?</p>
+                      <select name="payerId" className="w-full p-2 border border-slate-200 rounded-lg text-sm bg-slate-50 outline-none" required>
+                        <option value="">-- เลือกคนจ่าย --</option>
+                        {friends.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-100">
+                      <p className="text-xs font-bold text-slate-700 mb-2">🍴 ใครร่วมกินบ้าง? (เลือกหลายคนได้)</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {friends.map(f => (
+                          <label key={f.id} className="flex items-center gap-2 text-sm bg-slate-50 p-2 rounded-lg border border-slate-200 cursor-pointer hover:bg-indigo-50">
+                            <input type="checkbox" name="participants" value={f.id} className="w-4 h-4 text-indigo-600 rounded" defaultChecked />
+                            {f.name}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <button disabled={friends.length === 0} className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-lg text-sm hover:bg-indigo-700 transition disabled:opacity-50">
+                      {friends.length === 0 ? 'กรุณาเพิ่มเพื่อนก่อน' : 'บันทึกบิล'}
+                    </button>
+                  </form>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="font-bold text-slate-700 text-sm">ประวัติบิลย้อนหลัง ({meals.length})</h3>
+                      {meals.length > 0 && <button onClick={clearAllData} className="text-xs text-rose-500 hover:underline">ล้างบิลทั้งหมด</button>}
+                    </div>
+                    {meals.map(m => {
+                      const payer = friends.find(f => f.id === m.payerId);
+                      const parts = m.participantIds.map(id => friends.find(f=>f.id===id)?.name).filter(Boolean);
+                      return (
+                        <div key={m.id} className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm relative">
+                          <button onClick={() => deleteMeal(m.id)} className="absolute top-3 right-3 text-slate-300 hover:text-rose-500 transition">✕</button>
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h4 className="font-bold text-slate-800">{m.title}</h4>
+                              <p className="text-xs text-slate-400 mt-0.5">{m.date}</p>
+                            </div>
+                            <span className="font-mono font-bold text-lg text-rose-600">{m.amount.toLocaleString('th-TH')} ฿</span>
+                          </div>
+                          <div className="text-xs text-slate-600 bg-slate-50 p-2 rounded-lg mt-2 space-y-1">
+                            <p><span className="text-slate-400">คนจ่าย:</span> <span className="font-semibold text-emerald-600">{payer?.name || 'ลบไปแล้ว'}</span></p>
+                            <p><span className="text-slate-400">คนกิน ({parts.length}):</span> {parts.join(', ')}</p>
+                            <p><span className="text-slate-400">ตกคนละ:</span> {(m.amount / m.participantIds.length).toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {meals.length === 0 && <p className="text-center text-slate-400 text-sm py-4">ยังไม่มีประวัติการบันทึกมื้ออาหาร</p>}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'settle' && (
+                <div className="animate-fade-in">
+                  <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl mb-6">
+                    <h2 className="font-bold text-emerald-800 text-sm flex items-center gap-2">✨ สรุปยอดโอน (หักลบหนี้ให้แล้ว)</h2>
+                    <p className="text-xs text-emerald-600 mt-1">ระบบได้คำนวณหักลบหนี้ที่ค้างกันไปมา และรวบยอดให้โอนน้อยครั้งที่สุดแล้ว!</p>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {settlement.length === 0 ? (
+                      <div className="text-center py-10 bg-slate-50 rounded-xl border border-slate-200">
+                        <div className="text-4xl mb-2">🎉</div>
+                        <p className="font-bold text-slate-700">ไม่มีใครค้างหนี้กัน!</p>
+                        <p className="text-xs text-slate-500 mt-1">ยอดเงินเคลียร์ลงตัวครบทุกคนแล้ว</p>
+                      </div>
+                    ) : (
+                      settlement.map((s, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-sm mb-1">
+                              <span className="font-bold text-rose-600">{s.from}</span>
+                              <span className="text-slate-400 text-[10px]">โอนให้ 👉</span>
+                              <span className="font-bold text-emerald-600">{s.to}</span>
+                            </div>
+                            {s.promptPay ? (
+                              <p className="text-[11px] text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded inline-block mt-1">พร้อมเพย์: {s.promptPay}</p>
+                            ) : (
+                              <p className="text-[11px] text-amber-500 mt-1">ไม่ได้ระบุพร้อมเพย์</p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="font-mono font-bold text-xl text-slate-800">{s.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span>
+                            <button 
+                              onClick={() => { navigator.clipboard.writeText(s.promptPay || ''); alert('คัดลอกพร้อมเพย์แล้ว'); }} 
+                              className="block w-full mt-2 text-[10px] text-indigo-600 hover:underline"
+                            >
+                              คัดลอกเลข
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </section>
+          </div>
+          <p className="text-center text-[10px] text-slate-400 mt-4 pb-4">Developed by Google Gemini ✦</p>
         </div>
       );
     }
