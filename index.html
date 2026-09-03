@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MealSplit TH - ระบบหารค่าข้าว & หักลบหนี้ (Full Version)</title>
+
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3170/3170733.png">
+  <link rel="manifest" href="manifest.json">
   
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -223,13 +229,20 @@
       const closeModal = (name) => setModals({ ...modals, [name]: false });
 
       const handleAddMeal = async (e) => {
-        e.preventDefault();
-        const title = e.target.title.value;
-        const baseAmount = parseFloat(e.target.amount.value);
-        const payerId = e.target.payerId.value;
-        const participantIds = Array.from(e.target.participants).filter(cb => cb.checked).map(cb => cb.value);
-        const hasVat = e.target.hasVat.checked;
-        const hasSc = e.target.hasSc.checked;
+          e.preventDefault();
+          
+          //ใช้ FormData ดึงค่าจากฟอร์มทั้งหมดอย่างปลอดภัย
+          const formData = new FormData(e.target);
+          
+          const title = formData.get('title');
+          const date = formData.get('date');
+          const categoryId = formData.get('category');
+          const baseAmount = parseFloat(formData.get('amount'));
+          const payerId = formData.get('payerId');
+          const participantIds = formData.getAll('participants'); 
+          
+          const hasVat = formData.get('hasVat') !== null;
+          const hasSc = formData.get('hasServiceCharge') !== null;
 
         if (title && baseAmount && payerId && participantIds.length > 0) {
           let finalAmount = baseAmount;
