@@ -13,10 +13,10 @@
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   
-  <!-- Babel สำหรับคอมไพล์ JSX ในเบราว์เซอร์ -->
+  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Firebase (Compat version สำหรับรันบนไฟล์ HTML ตรงๆ) -->
+  <!-- Firebase (Compat version) -->
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
 
@@ -31,7 +31,7 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // 1. ตั้งค่า Firebase เชื่อมต่อกับโปรเจกต์ใหม่
+    // 1. ตั้งค่า Firebase เชื่อมต่อกับโปรเจกต์ใหม่ (mealsplit-th)
     const firebaseConfig = {
       projectId: "mealsplit-th",
       appId: "1:575865319667:web:df3d76a11f4f944656c786",
@@ -48,7 +48,7 @@
 
     // 2. ฟังก์ชันสร้าง Payload สำหรับพร้อมเพย์แบบไม่ต้องพึ่ง npm
     function generatePromptPayPayload(target, amount) {
-      target = target.replace(/[^0-9]/g, '');
+      target = target ? target.replace(/[^0-9]/g, '') : '';
       if (!target) return "";
       
       const targetType = target.length >= 15 ? '03' : target.length >= 13 ? '02' : '01';
@@ -106,10 +106,16 @@
       useEffect(() => {
         const unsubFriends = db.collection('friends').orderBy('createdAt', 'asc').onSnapshot(snap => {
           setFriends(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, err => {
+          console.error("Friends Error:", err);
+          if (err.code === 'permission-denied') alert('ไม่สามารถดึงข้อมูลได้ กรุณาไปตั้งค่า Rules ใน Firebase เป็น allow read, write: if true;');
         });
 
         const unsubMeals = db.collection('meals').orderBy('createdAt', 'desc').onSnapshot(snap => {
           setMeals(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          setIsLoading(false);
+        }, err => {
+          console.error("Meals Error:", err);
           setIsLoading(false);
         });
 
@@ -124,13 +130,18 @@
         if (name) {
           const colors = ['indigo','emerald','rose','amber','purple','cyan','teal'];
           const color = `bg-${colors[friends.length % colors.length]}-500`;
-          await db.collection('friends').add({ name, promptPay, color, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+          await db.collection('friends').add({ 
+            name, promptPay, color, 
+            createdAt: firebase.firestore.FieldValue.serverTimestamp() 
+          });
           e.target.reset();
         }
       };
 
       const deleteFriend = async (id) => {
-        if(confirm('ลบเพื่อนคนนี้?')) await db.collection('friends').doc(id).delete();
+        if(confirm('ลบเพื่อนคนนี้?')) {
+          await db.collection('friends').doc(id).delete();
+        }
       };
 
       // จัดการมื้ออาหาร
@@ -154,7 +165,9 @@
       };
 
       const deleteMeal = async (id) => {
-        if(confirm('ลบบิลมื้อนี้?')) await db.collection('meals').doc(id).delete();
+        if(confirm('ลบบิลมื้อนี้?')) {
+          await db.collection('meals').doc(id).delete();
+        }
       };
 
       // อัลกอริทึมคำนวณหักลบหนี้
@@ -210,7 +223,7 @@
         return { totalExpense, transfers, balances };
       }, [friends, meals]);
 
-      if (isLoading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเชื่อมต่อฐานข้อมูล Realtime...</div>;
+      if (isLoading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังดึงข้อมูลจาก Cloud...</div>;
 
       return (
         <div className="max-w-xl mx-auto min-h-screen flex flex-col sm:py-6">
@@ -218,9 +231,9 @@
             {/* ส่วนหัวของแอป */}
             <div className="bg-indigo-600 p-6 text-white text-center">
               <h1 className="text-2xl font-bold tracking-tight">MealSplit TH 🍽️</h1>
-              <p className="text-indigo-200 text-sm mt-1">ระบบหารค่าข้าว & หักลบหนี้เรียลไทม์</p>
+              <p className="text-indigo-200 text-sm mt-1">ระบบหารค่าข้าว & หักลบหนี้ออนไลน์</p>
               <div className="mt-2 inline-block bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
-                Online - ซิงค์ข้อมูลข้ามเครื่องอัตโนมัติ
+                Online - ซิงค์เรียลไทม์
               </div>
             </div>
 
@@ -256,7 +269,7 @@
                         <button onClick={() => deleteFriend(f.id)} className="text-rose-500 p-2 text-xs font-bold hover:bg-rose-50 rounded transition">ลบ</button>
                       </div>
                     ))}
-                    {friends.length === 0 && <p className="text-center text-slate-400 text-sm py-4">ยังไม่มีรายชื่อเพื่อนในกลุ่มนี้</p>}
+                    {friends.length === 0 && <p className="text-center text-slate-400 text-sm py-4 border border-dashed rounded-lg border-slate-300">ยังไม่มีรายชื่อเพื่อนในกลุ่มนี้</p>}
                   </div>
                 </div>
               )}
@@ -266,8 +279,8 @@
                 <div className="animate-fade-in">
                   <form onSubmit={handleAddMeal} className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6 space-y-3">
                     <h2 className="font-bold text-indigo-900 text-sm">📝 บันทึกมื้อใหม่</h2>
-                    <input name="title" placeholder="ชื่อรายการ (เช่น ชาบูหม่าล่า) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm focus:border-indigo-500" required />
-                    <input name="amount" type="number" step="0.01" placeholder="ยอดรวมทั้งบิล (บาท) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm focus:border-indigo-500" required />
+                    <input name="title" placeholder="ชื่อรายการ (เช่น ชาบูหม่าล่า) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" required />
+                    <input name="amount" type="number" step="0.01" placeholder="ยอดรวมทั้งบิล (บาท) *" className="w-full p-2.5 rounded-lg border border-white text-sm outline-none shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" required />
                     
                     <div className="bg-white p-3 rounded-lg shadow-sm border border-slate-100">
                       <p className="text-xs font-bold text-slate-700 mb-2">💸 ใครเป็นคนสำรองจ่ายเงิน?</p>
@@ -301,7 +314,7 @@
                       const parts = m.participantIds.map(id => friends.find(f=>f.id===id)?.name).filter(Boolean);
                       return (
                         <div key={m.id} className="p-4 bg-white rounded-xl border border-slate-200 shadow-sm relative hover:border-indigo-300 transition">
-                          <button onClick={() => deleteMeal(m.id)} className="absolute top-3 right-3 text-slate-300 hover:text-rose-500 transition text-xs font-bold">✕ ลบ</button>
+                          <button onClick={() => deleteMeal(m.id)} className="absolute top-3 right-3 text-slate-300 hover:text-rose-500 transition text-xs font-bold bg-slate-50 p-1.5 rounded">✕ ลบ</button>
                           <div className="flex justify-between items-start mb-2 pr-8">
                             <div>
                               <h4 className="font-bold text-slate-800">{m.title}</h4>
@@ -320,7 +333,7 @@
                         </div>
                       );
                     })}
-                    {meals.length === 0 && <p className="text-center text-slate-400 text-sm py-4">ยังไม่มีประวัติการบันทึกมื้ออาหาร</p>}
+                    {meals.length === 0 && <p className="text-center text-slate-400 text-sm py-4 border border-dashed rounded-lg border-slate-300">ยังไม่มีประวัติการบันทึกมื้ออาหาร</p>}
                   </div>
                 </div>
               )}
@@ -346,9 +359,9 @@
                         <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col">
                           <div className="flex justify-between items-center mb-3 pb-3 border-b border-slate-100">
                             <div className="flex items-center gap-2 text-sm">
-                              <span className="font-bold text-rose-600">{s.from}</span>
+                              <span className="font-bold text-rose-600">{s.fromName}</span>
                               <span className="text-slate-300 text-[10px]">โอนให้ 👉</span>
-                              <span className="font-bold text-emerald-600">{s.to}</span>
+                              <span className="font-bold text-emerald-600">{s.toName}</span>
                             </div>
                             <span className="font-mono font-extrabold text-lg text-slate-800">{s.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span>
                           </div>
@@ -375,7 +388,7 @@
               )}
             </div>
           </div>
-          <p className="text-center text-[10px] text-slate-400 mt-4 pb-4">Developed by Gemini ✦ Realtime Sync Active</p>
+          <p className="text-center text-[10px] text-slate-400 mt-4 pb-4">Developed by Gemini ✦ Firestore Realtime Sync Active</p>
         </div>
       );
     }
