@@ -295,6 +295,7 @@
       if (isLoading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold bg-slate-50 flex-col gap-4"><div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>กำลังโหลดข้อมูล...</div>;
 
       return (
+        <>
         <div className="max-w-6xl mx-auto min-h-screen flex flex-col bg-slate-50">
           
           {/* HEADER (เหมือนในภาพ) */}
@@ -756,6 +757,7 @@
         </Modal>
 
       </div>
+       </> 
     }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
