@@ -1302,20 +1302,35 @@
       const handleAdd = async (e) => {
         e.preventDefault();
         if (newCat.trim()) {
-          await db.collection('categories').add({ label: newCat.trim(), createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+          await db.collection('categories').add({ 
+            label: newCat.trim(), 
+            createdAt: firebase.firestore.FieldValue.serverTimestamp() 
+          });
           setNewCat('');
         }
       };
 
       const handleEdit = async (e) => {
         e.preventDefault();
-        if (editLabel.trim()) {
-          await db.collection('categories').doc(editingId).update({ label: editLabel.trim() });
+        if (editLabel.trim() && editingId) {
+          // ใช้ { merge: true } เพื่อให้บันทึกและแก้ไขได้ แม้เป็นหมวดหมู่ Default
+          await db.collection('categories').doc(editingId).set({ 
+            label: editLabel.trim(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          setEditingId(null);
+        }
+      };
+
+      const handleDelete = async (id) => {
+        if(confirm('ยืนยันการลบหมวดหมู่นี้?')) {
+          await db.collection('categories').doc(id).delete();
           setEditingId(null);
         }
       };
 
       if (!isOpen) return null;
+
       return (
         <Modal isOpen={isOpen} onClose={onClose} title="จัดการหมวดหมู่อาหาร">
           <div className="p-5 space-y-4">
@@ -1323,6 +1338,7 @@
               <input value={newCat} onChange={e=>setNewCat(e.target.value)} placeholder="ชื่อหมวดหมู่ใหม่ เช่น ซูชิ" className="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-indigo-500 bg-slate-50"/>
               <button type="submit" disabled={!newCat} className="bg-indigo-600 text-white px-5 rounded-xl font-bold text-sm flex items-center gap-1 disabled:opacity-50 hover:bg-indigo-700 transition"><Icon name="add" className="text-[18px]"/> เพิ่ม</button>
             </form>
+            
             <div className="mt-6">
               <h3 className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">รายการหมวดหมู่ทั้งหมด</h3>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -1331,15 +1347,15 @@
                     {editingId === c.id ? (
                       <form onSubmit={handleEdit} className="flex gap-2 w-full">
                         <input value={editLabel} onChange={e=>setEditLabel(e.target.value)} className="flex-1 p-1.5 border border-slate-300 rounded text-sm outline-none focus:border-indigo-500" autoFocus />
-                        <button type="submit" className="text-xs bg-indigo-600 text-white px-3 rounded font-bold">บันทึก</button>
-                        <button type="button" onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-600 px-3 rounded font-bold">ยกเลิก</button>
+                        <button type="submit" className="text-xs bg-indigo-600 text-white px-3 rounded font-bold hover:bg-indigo-700">บันทึก</button>
+                        <button type="button" onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-600 px-3 rounded font-bold hover:bg-slate-200">ยกเลิก</button>
                       </form>
                     ) : (
                       <>
                         <span className="text-sm font-bold text-slate-800">{c.label}</span>
                         <div className="flex gap-1 text-slate-400">
                           <button onClick={() => { setEditingId(c.id); setEditLabel(c.label); }} className="p-1 hover:text-indigo-600 transition"><Icon name="edit" className="text-[18px]"/></button>
-                          <button onClick={() => {if(confirm('ลบหมวดหมู่นี้?')) db.collection('categories').doc(c.id).delete()}} className="p-1 hover:text-rose-600 transition"><Icon name="delete" className="text-[18px]"/></button>
+                          <button onClick={() => handleDelete(c.id)} className="p-1 hover:text-rose-600 transition"><Icon name="delete" className="text-[18px]"/></button>
                         </div>
                       </>
                     )}
@@ -1347,6 +1363,7 @@
                 ))}
               </div>
             </div>
+
             <div className="pt-4 flex justify-end">
               <button onClick={onClose} className="px-6 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200">เสร็จสิ้น</button>
             </div>
