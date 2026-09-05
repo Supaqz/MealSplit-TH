@@ -103,7 +103,14 @@
       return categories.find(c => c.id === m.categoryId) || DEFAULT_CATEGORIES[0];
     };
 
-    function calculateSettlement(meals, friends, settledDebts) {
+    function calculateSettlement(meals, friends, settledDebts, mode = 'all') {
+      const filteredMeals = meals.filter(m => {
+        if (mode === 'food_only') return !m.isCustomDebt;
+        if (mode === 'debt_only') return m.isCustomDebt;
+        if (m.isCustomDebt && m.includeInAutoSettle === false) return false;
+        return true;
+      });
+
       const balances = {};
       friends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
 
@@ -121,9 +128,7 @@
 
       let totalExpense = 0; 
       
-      meals.forEach(m => {
-        if (m.isCustomDebt && m.includeInAutoSettle === false) return;
-
+      filteredMeals.forEach(m => {
         totalExpense += m.finalAmount;
         if(balances[m.payerId]) {
           balances[m.payerId].totalPaid += m.finalAmount;
@@ -194,8 +199,7 @@
             fromOwesToTotal = historyFromOwesTo.reduce((s, h) => s + h.amount, 0) - settledFromToTotal;
             toOwesFromTotal = historyToOwesFrom.reduce((s, h) => s + h.amount, 0) - settledToFromTotal;
 
-            meals.forEach(m => {
-              if (m.isCustomDebt && m.includeInAutoSettle === false) return;
+            filteredMeals.forEach(m => {
               if ((m.payerId === toId && m.participants.some(p => p.friendId === fromId)) ||
                   (m.payerId === fromId && m.participants.some(p => p.friendId === toId))) {
                  activeMealsSet.add(m.id);
@@ -673,16 +677,34 @@
     // ==========================================
     // 6. EXTRA COMPONENTS
     // ==========================================
-    function SettlementView({ settlementData, meals, friends, onSettleDebt, onOpenQR, exportToImage, openLineShare }) {
+    function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenQR, exportToImage, shareToLine }) {
       const [expandedId, setExpandedId] = useState(null);
+      const [netMode, setNetMode] = useState('all'); // 'all' = รวมทั้งหมด, 'food_only' = เฉพาะค่าข้าว, 'debt_only' = เฉพาะหนี้ค้าง
+
+      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode), [meals, friends, settledDebts, netMode]);
+
       return (
         <div className="space-y-6 animate-fade-in pb-10">
+          {/* ตัวเลือกโหมดการหักลบหนี้ */}
+          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pl-2">
+              <Icon name="tune" className="text-indigo-600 text-sm"/> เลือกมุมมองการเคลียร์หนี้:
+            </div>
+            <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+              <button onClick={() => setNetMode('all')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'all' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>รวมค่าข้าว + หนี้ค้าง</button>
+              <button onClick={() => setNetMode('food_only')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'food_only' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>เฉพาะค่าข้าว</button>
+              <button onClick={() => setNetMode('debt_only')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'debt_only' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>💸 เฉพาะหนี้ค้างต่างหาก</button>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center border border-indigo-100"><Icon name="balance" className="text-3xl"/></div>
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-slate-500 font-bold">ยอดรวมรอบนี้ (ที่ยังไม่เคลียร์)</span>
+                  <span className="text-sm text-slate-500 font-bold">
+                    {netMode === 'debt_only' ? 'ยอดหนี้ค้างรวม' : netMode === 'food_only' ? 'ยอดค่าข้าวรวม' : 'ยอดรวมทั้งหมด (ที่ยังไม่เคลียร์)'}
+                  </span>
                   <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md font-bold">{settlementData.activeMealsList.length} รายการ</span>
                 </div>
                 <h2 className="text-3xl sm:text-4xl font-mono font-extrabold text-slate-900">{settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</h2>
@@ -690,7 +712,7 @@
             </div>
             <div className="flex flex-wrap gap-2">
               <button onClick={exportToImage} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold hover:bg-amber-100 flex items-center gap-1.5 transition"><Icon name="image" className="text-[16px]"/> บันทึกรูปภาพ</button>
-              <button onClick={openLineShare} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon name="share" className="text-[16px]"/> แชร์ LINE</button>
+              <button onClick={shareToLine} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon name="share" className="text-[16px]"/> แชร์ LINE</button>
             </div>
           </div>
 
@@ -723,7 +745,7 @@
                 <div className="text-center py-16 bg-white rounded-3xl border border-slate-200 shadow-sm">
                   <span className="text-6xl block mb-4">🎉</span>
                   <h3 className="font-extrabold text-xl text-slate-800">เคลียร์ยอดครบถ้วน!</h3>
-                  <p className="text-sm mt-2 text-slate-500">ไม่มีใครค้างเงินกันในระบบตอนนี้ (ยอดค้างชำระ = 0.00 ฿)</p>
+                  <p className="text-sm mt-2 text-slate-500">ไม่มีใครค้างเงินกันในระบบตามมุมมองที่เลือก</p>
                 </div>
               ) : (
                 settlementData.transfers.map((t, idx) => (
