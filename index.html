@@ -49,7 +49,7 @@
     }
     input[type="number"] {
       -moz-appearance: textfield;
-      }
+    }
   </style>
 </head>
 <body>
@@ -111,6 +111,11 @@
       return payload + (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
     }
 
+    const getCategoryInfo = (m, categories) => {
+      if (m.isCustomDebt) return { label: 'หนี้ค้าง/ยืมเงิน', icon: '💸', color: 'bg-rose-50 text-rose-700 border-rose-200' };
+      return categories.find(c => c.id === m.categoryId) || DEFAULT_CATEGORIES[0];
+    };
+
     function calculateSettlement(meals, friends, settledDebts) {
       const balances = {};
       friends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
@@ -130,6 +135,9 @@
       let totalExpense = 0; 
       
       meals.forEach(m => {
+        // ถ้ารายการนั้นเป็นหนี้ที่เลือก "ไม่รวมยอด" ให้ข้ามไปเลย
+        if (m.isCustomDebt && m.includeInAutoSettle === false) return;
+
         totalExpense += m.finalAmount;
         if(balances[m.payerId]) {
           balances[m.payerId].totalPaid += m.finalAmount;
@@ -201,6 +209,7 @@
             toOwesFromTotal = historyToOwesFrom.reduce((s, h) => s + h.amount, 0) - settledToFromTotal;
 
             meals.forEach(m => {
+              if (m.isCustomDebt && m.includeInAutoSettle === false) return; // Skip
               if ((m.payerId === toId && m.participants.some(p => p.friendId === fromId)) ||
                   (m.payerId === fromId && m.participants.some(p => p.friendId === toId))) {
                  activeMealsSet.add(m.id);
@@ -248,7 +257,6 @@
       if (!isOpen) return null;
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay animate-fade-in">
-          {/* เปลี่ยนแค่บรรทัดนี้ ให้รองรับจอมือถือ (w-[95%] sm:w-full) */}
           <div className={`bg-white rounded-2xl w-[92%] sm:w-full ${fullWidth ? 'max-w-4xl' : 'max-w-lg'} shadow-2xl overflow-hidden flex flex-col max-h-[90vh] sm:max-h-[95vh] relative`}>
             {title && (
               <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50/80">
@@ -278,6 +286,7 @@
       if (!src) return <div className="text-xs text-slate-500 bg-slate-50 p-6 rounded-xl text-center border border-slate-200 border-dashed w-48 h-48 flex items-center justify-center">ไม่มีพร้อมเพย์</div>;
       return <img src={src} alt="QR" className="w-48 h-48 mx-auto rounded-xl shadow-sm border border-slate-200 p-2" />;
     }
+    
     function ConfirmModal({ isOpen, onClose, title, message, onConfirm, confirmText = "ยืนยัน", confirmColor = "bg-rose-600 hover:bg-rose-700" }) {
       if (!isOpen) return null;
       return (
@@ -299,6 +308,7 @@
         </Modal>
       );
     }
+    
     // ==========================================
     // 5. APP CONTAINER
     // ==========================================
@@ -313,12 +323,13 @@
       const [isLoading, setIsLoading] = useState(true);
       const summaryRef = useRef(null);
 
-      const [modals, setModals] = useState({ addMeal: false, addFriend: false, qr: false, category: false, export: false, viewMeal: false });
+      const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, viewMeal: false });
       const [selectedTransfer, setSelectedTransfer] = useState(null);
       const [editingMeal, setEditingMeal] = useState(null);
+      const [editingDebt, setEditingDebt] = useState(null);
       const [editingFriend, setEditingFriend] = useState(null);
       const [viewingMeal, setViewingMeal] = useState(null);
-      // เพิ่ม State สำหรับป๊อปอัปยืนยัน
+      
       const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null, confirmText: 'ยืนยัน', confirmColor: 'bg-rose-600 hover:bg-rose-700' });
       
       const showConfirm = (title, message, onConfirm, confirmText = 'ยืนยัน', confirmColor = 'bg-rose-600 hover:bg-rose-700') => {
@@ -334,7 +345,6 @@
         });
         const unsubCategories = db.collection('categories').orderBy('createdAt', 'asc').onSnapshot(snap => {
           if (snap.docs.length === 0) {
-            // ถ้าในฐานข้อมูลว่างเปล่า ให้สร้างหมวดหมู่พื้นฐานเข้าไปเป็นข้อมูลจริงเลย
             DEFAULT_CATEGORIES.forEach((cat, idx) => {
               db.collection('categories').doc(cat.id).set({
                 label: cat.label,
@@ -355,12 +365,14 @@
       const openModal = (name, data = null) => {
         if (name === 'qr') setSelectedTransfer(data);
         if (name === 'addMeal') setEditingMeal(data);
+        if (name === 'addDebt') setEditingDebt(data);
         if (name === 'addFriend') setEditingFriend(data);
         if (name === 'viewMeal') setViewingMeal(data);
         setModals(prev => ({ ...prev, [name]: true }));
       };
       const closeModal = (name) => {
         if (name === 'addMeal') setEditingMeal(null);
+        if (name === 'addDebt') setEditingDebt(null);
         if (name === 'addFriend') setEditingFriend(null);
         if (name === 'viewMeal') setViewingMeal(null);
         setModals(prev => ({ ...prev, [name]: false }));
@@ -414,7 +426,7 @@
           const data = {
             title, date: formData.get('date'), categoryId: formData.get('category'), 
             baseAmount, finalAmount: adjustedFinal, discount: discountAmt, hasVat, hasServiceCharge: hasSc, 
-            payerId, participants, splitMode: 'equal', roundingMode: rounding
+            payerId, participants, splitMode: 'equal', roundingMode: rounding, isCustomDebt: false
           };
 
           if (editingMeal && editingMeal.id) {
@@ -425,6 +437,16 @@
           }
           closeModal('addMeal');
         } else alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+      };
+
+      const handleSaveCustomDebt = async (data, id) => {
+        if (id) {
+            await db.collection('meals').doc(id).update(data);
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('meals').add(data);
+        }
+        closeModal('addDebt');
       };
 
       const deleteMeal = (id) => {
@@ -443,9 +465,23 @@
         }, 'โอนเสร็จแล้ว เคลียร์เลย', 'bg-emerald-600 hover:bg-emerald-700');
       };
 
+      const handleEditItem = (m) => {
+        if (m.isCustomDebt) openModal('addDebt', m);
+        else openModal('addMeal', m);
+      };
+
+      const handleCopyItem = (m) => {
+        const copyData = {...m, id: null, title: m.title + ' (คัดลอก)'};
+        if (m.isCustomDebt) openModal('addDebt', copyData);
+        else openModal('addMeal', copyData);
+      };
+
       const shareToLine = () => {
-        if (settleData.transfers.length === 0) return alert('เคลียร์ยอดครบแล้ว ไม่มีใครค้างเงิน');
-        let text = `💸 สรุปยอดหารค่าอาหาร (${settleData.activeMealsList.length} มื้อที่ค้างจ่าย)\nยอดรวมบิลรอบนี้: ${settleData.activeTotalExpense.toLocaleString()} บาท\n\n📌 ยอดที่ต้องโอนสุทธิ:\n`;
+        if (settleData.transfers.length === 0) {
+          alert('ไม่มีหนี้ค้างชำระ');
+          return;
+        }
+        let text = `💸 สรุปยอดหารค่าอาหารและหนี้ค้าง (${settleData.activeMealsList.length} รายการ)\nยอดรวมที่ต้องเคลียร์: ${settleData.activeTotalExpense.toLocaleString()} บาท\n\n📌 ยอดที่ต้องโอนสุทธิ:\n`;
         settleData.transfers.forEach(t => {
           text += `👉 ${t.fromName} โอนให้ ${t.toName}: ${t.amount.toLocaleString()} ฿\n`;
           if (t.promptPay) text += `   พร้อมเพย์: ${t.promptPay}\n`;
@@ -473,21 +509,21 @@
                 </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={shareToLine} className="hidden sm:flex items-center gap-1 px-3 py-2 border border-slate-200 bg-white text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-50 transition"><Icon name="share" className="text-sm text-[#06C755]"/> แชร์เข้า LINE</button>
+                <button onClick={() => openModal('addDebt')} className="hidden md:flex items-center gap-1 px-4 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-bold hover:bg-rose-100 transition"><Icon name="account_balance_wallet" className="text-sm"/> เพิ่มหนี้ค้าง</button>
                 <button onClick={() => openModal('addMeal')} className="flex items-center gap-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition"><Icon name="add" className="text-sm"/> ลงบันทึกมื้อใหม่</button>
               </div>
             </div>
 
             {/* TABS */}
-            <div className="flex bg-white shadow-sm border-b border-slate-200 text-sm font-bold text-slate-500">
+            <div className="hidden sm:flex bg-white shadow-sm border-b border-slate-200 text-sm font-bold text-slate-500">
               <button onClick={() => setActiveTab('settle')} className={`flex-1 py-4 flex items-center justify-center gap-2 transition ${activeTab === 'settle' ? 'text-indigo-700 border-b-2 border-indigo-600 bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
                 <Icon name="balance" className="text-lg"/> เคลียร์ยอด
               </button>
               <button onClick={() => setActiveTab('calendar')} className={`flex-1 py-4 flex items-center justify-center gap-2 transition ${activeTab === 'calendar' ? 'text-indigo-700 border-b-2 border-indigo-600 bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
-                <Icon name="calendar_month" className="text-lg"/> ปฏิทิน <span className="hidden sm:inline bg-indigo-100 text-indigo-700 px-1.5 rounded text-[10px]">{meals.length} มื้อ</span>
+                <Icon name="calendar_month" className="text-lg"/> ปฏิทิน <span className="hidden sm:inline bg-indigo-100 text-indigo-700 px-1.5 rounded text-[10px]">{meals.length}</span>
               </button>
               <button onClick={() => setActiveTab('meals')} className={`flex-1 py-4 flex items-center justify-center gap-2 transition ${activeTab === 'meals' ? 'text-indigo-700 border-b-2 border-indigo-600 bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
-                <Icon name="receipt" className="text-lg"/> บิลอาหาร
+                <Icon name="receipt" className="text-lg"/> ประวัติ
               </button>
               <button onClick={() => setActiveTab('friends')} className={`flex-1 py-4 flex items-center justify-center gap-2 transition ${activeTab === 'friends' ? 'text-indigo-700 border-b-2 border-indigo-600 bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
                 <Icon name="group" className="text-lg"/> เพื่อน
@@ -524,8 +560,9 @@
                       <div className={`w-10 h-10 rounded-lg flex items-center justify-center shadow-sm ${activeTab === 'friends' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'}`}><Icon name="group" /></div>
                       <div><div className={`text-sm font-bold ${activeTab==='friends'?'text-indigo-700':'text-slate-700'}`}>กลุ่มเพื่อน & บัญชีรับเงิน</div><div className="text-[11px] text-slate-400">จัดการรายชื่อ พร้อมเบอร์พร้อมเพย์/บัญชี</div></div>
                     </button>
+                    
                     <div className="mt-6 pt-6 border-t border-slate-100 flex gap-2">
-                      <button onClick={shareToLine} className="flex-1 py-2 bg-[#06C755] text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1"><Icon name="share" className="text-sm"/> แชร์ LINE</button>
+                      <button onClick={() => { setIsDrawerOpen(false); openModal('addDebt'); }} className="flex-1 py-2 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-bold flex items-center justify-center gap-1"><Icon name="account_balance_wallet" className="text-sm"/> เพิ่มหนี้ค้าง</button>
                       <button onClick={() => { setIsDrawerOpen(false); openModal('export'); }} className="flex-1 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-xs font-bold flex items-center justify-center gap-1"><Icon name="image" className="text-sm"/> เซฟรูป</button>
                     </div>
                   </div>
@@ -550,10 +587,11 @@
                 <CalendarView 
                   meals={meals} 
                   friends={friends} 
+                  categories={categories}
                   onOpenAddMeal={(date) => openModal('addMeal', { date })}
                   onViewMeal={(m) => openModal('viewMeal', m)}
-                  onEditMeal={(m) => openModal('addMeal', m)}
-                  onCopyMeal={(m) => openModal('addMeal', {...m, id: null, title: m.title + ' (คัดลอก)'})}
+                  onEditItem={handleEditItem}
+                  onCopyItem={handleCopyItem}
                   onDeleteMeal={deleteMeal}
                 />
               )}
@@ -563,8 +601,8 @@
                   friends={friends} 
                   categories={categories}
                   onViewMeal={(m) => openModal('viewMeal', m)}
-                  onEditMeal={(m) => openModal('addMeal', m)}
-                  onCopyMeal={(m) => openModal('addMeal', {...m, id: null, title: m.title + ' (คัดลอก)'})}
+                  onEditItem={handleEditItem}
+                  onCopyItem={handleCopyItem}
                   onDeleteMeal={deleteMeal} 
                 />
               )}
@@ -592,6 +630,16 @@
               categories={categories}
               openCategoryManager={() => openModal('category')}
               onSubmit={handleAddMeal}
+            />
+          )}
+
+          {modals.addDebt && (
+            <AddDebtModal 
+              isOpen={modals.addDebt} 
+              onClose={() => closeModal('addDebt')} 
+              initialData={editingDebt}
+              friends={friends} 
+              onSubmit={handleSaveCustomDebt}
             />
           )}
 
@@ -625,13 +673,13 @@
 
           <CategoryManagerModal isOpen={modals.category} onClose={() => closeModal('category')} categories={categories} showConfirm={showConfirm} />
           <QRCodeModal isOpen={modals.qr} onClose={() => closeModal('qr')} transfer={selectedTransfer} onSettle={handleSettleDebt} />
-          
           <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} settlementData={settleData} meals={meals} friends={friends} />
 
           <ViewMealModal isOpen={modals.viewMeal} onClose={() => closeModal('viewMeal')} meal={viewingMeal} friends={friends} categories={categories}
-            onEdit={() => { closeModal('viewMeal'); openModal('addMeal', viewingMeal); }}
+            onEdit={() => { closeModal('viewMeal'); handleEditItem(viewingMeal); }}
             onDelete={() => deleteMeal(viewingMeal.id)}
           />
+
           <ConfirmModal 
             isOpen={confirmDialog.isOpen} 
             onClose={closeConfirm}
@@ -659,7 +707,7 @@
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm text-slate-500 font-bold">ยอดรวมรอบนี้ (ที่ยังไม่เคลียร์)</span>
-                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md font-bold">{settlementData.activeMealsList.length} มื้อ</span>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md font-bold">{settlementData.activeMealsList.length} รายการ</span>
                 </div>
                 <h2 className="text-3xl sm:text-4xl font-mono font-extrabold text-slate-900">{settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</h2>
               </div>
@@ -763,7 +811,7 @@
                     {/* สูตรคำนวณ Accordion */}
                     <div className="bg-slate-50 border-t border-slate-100 px-5 py-3 text-xs cursor-pointer hover:bg-slate-100 transition" onClick={() => setExpandedId(expandedId === idx ? null : idx)}>
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">คำนวณจากประวัติบิล {t.historyCount} รายการ</span>
+                        <span className="text-slate-500 font-medium">คำนวณจากประวัติ {t.historyCount} รายการ</span>
                         <span className="text-indigo-600 font-semibold flex items-center gap-1"><Icon name="calculate" className="text-[14px]"/> {expandedId === idx ? 'ซ่อนสูตรคำนวณ' : 'ดูสูตรคำนวณ'} <Icon name={expandedId === idx ? "expand_less" : "expand_more"} className="text-[16px]"/></span>
                       </div>
                       {expandedId === idx && (
@@ -780,7 +828,7 @@
                             {t.historyFromOwesTo.length > 0 ? (
                               <div className="space-y-1.5 text-[10px] text-slate-500">
                                 {t.historyFromOwesTo.map((h, i) => (
-                                  <div key={i} className="flex justify-between"><span className="truncate pr-2">• หารมื้อ "{h.mealTitle}" ({h.date})</span><span className="shrink-0">{h.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span></div>
+                                  <div key={i} className="flex justify-between"><span className="truncate pr-2">• รายการ "{h.mealTitle}" ({h.date})</span><span className="shrink-0">{h.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span></div>
                                 ))}
                                 {t.settledFromToTotal > 0 && <div className="text-emerald-600 font-semibold pt-1 border-t border-slate-100">• เคยโอนคืนไปแล้ว: -{t.settledFromToTotal.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</div>}
                               </div>
@@ -795,7 +843,7 @@
                             {t.historyToOwesFrom.length > 0 ? (
                               <div className="space-y-1.5 text-[10px] text-slate-500">
                                 {t.historyToOwesFrom.map((h, i) => (
-                                  <div key={i} className="flex justify-between"><span className="truncate pr-2">• หารมื้อ "{h.mealTitle}" ({h.date})</span><span className="shrink-0">{h.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span></div>
+                                  <div key={i} className="flex justify-between"><span className="truncate pr-2">• รายการ "{h.mealTitle}" ({h.date})</span><span className="shrink-0">{h.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span></div>
                                 ))}
                                 {t.settledToFromTotal > 0 && <div className="text-emerald-600 font-semibold pt-1 border-t border-slate-100">• เคยโอนคืนไปแล้ว: -{t.settledToFromTotal.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</div>}
                               </div>
@@ -822,7 +870,6 @@
           <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm mt-6">
             <div className="flex justify-between items-center mb-5 border-b border-slate-100 pb-3">
               <h3 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2"><Icon name="group" className="text-indigo-600"/> สรุปยอดสถานะของสมาชิกแต่ละคน</h3>
-              <span className="text-xs text-slate-500 font-mono bg-slate-50 px-3 py-1 rounded-lg border border-slate-200">ยอดเงินรวม: {settlementData.totalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {friends.map(f => {
@@ -859,7 +906,7 @@
       );
     }
 
-    function CalendarView({ meals, onOpenAddMeal, onViewMeal, onEditMeal, onCopyMeal, onDeleteMeal }) {
+    function CalendarView({ meals, categories, onOpenAddMeal, onViewMeal, onEditItem, onCopyItem, onDeleteMeal }) {
       const [currentMonth, setCurrentMonth] = useState(new Date());
       const [selectedDateStr, setSelectedDateStr] = useState(new Date().toISOString().split('T')[0]);
 
@@ -903,7 +950,7 @@
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl"><span className="text-[11px] text-slate-500 font-bold block mb-1">ยอดใช้จ่ายเดือนนี้</span><span className="text-lg font-bold font-mono text-slate-800">{totalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span></div>
-              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl"><span className="text-[11px] text-slate-500 font-bold block mb-1">จำนวนมื้อในเดือน</span><span className="text-lg font-bold font-mono text-slate-800">{monthMeals.length} มื้อ</span></div>
+              <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl"><span className="text-[11px] text-slate-500 font-bold block mb-1">จำนวนรายการในเดือน</span><span className="text-lg font-bold font-mono text-slate-800">{monthMeals.length} รายการ</span></div>
               <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl"><span className="text-[11px] text-slate-500 font-bold block mb-1">วันที่ออกไปกินข้าว</span><span className="text-lg font-bold font-mono text-slate-800">{mealDaysCount} วัน</span></div>
               <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl"><span className="text-[11px] text-slate-500 font-bold block mb-1">เฉลี่ยต่อวัน (ในเดือน)</span><span className="text-lg font-bold font-mono text-slate-800">{(totalExpense / (mealDaysCount || 1)).toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span></div>
             </div>
@@ -926,7 +973,7 @@
                         {dayMeals.length > 0 && (
                           <div className="space-y-1">
                             <div className="text-[10px] font-bold font-mono text-slate-800 hidden sm:block truncate">{dayTotal.toLocaleString('th-TH')} ฿</div>
-                            <div className="flex flex-wrap gap-1">{dayMeals.slice(0, 3).map((_, i) => <div key={i} className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>)}</div>
+                            <div className="flex flex-wrap gap-1">{dayMeals.slice(0, 3).map((m, i) => <div key={i} className={`w-1.5 h-1.5 rounded-full ${m.isCustomDebt ? 'bg-rose-500' : 'bg-indigo-500'}`}></div>)}</div>
                           </div>
                         )}
                       </div>
@@ -939,7 +986,7 @@
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 h-full flex flex-col">
                   <div className="flex justify-between items-start mb-6">
                     <div>
-                      <h3 className="text-[11px] text-indigo-600 font-bold mb-0.5">ประวัติมื้ออาหาร</h3>
+                      <h3 className="text-[11px] text-indigo-600 font-bold mb-0.5">ประวัติรายการวันนี้</h3>
                       <h4 className="font-bold text-slate-800 text-sm leading-tight">{selDateText}</h4>
                     </div>
                     <button onClick={() => onOpenAddMeal(selectedDateStr)} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold shadow-sm flex items-center gap-1 hover:bg-indigo-700 transition shrink-0">
@@ -949,24 +996,30 @@
                   <div className="flex-1 overflow-y-auto pr-1 space-y-3 hide-scrollbar">
                     {selectedMeals.length === 0 ? (
                       <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-6 text-center text-slate-400 flex flex-col items-center justify-center h-full min-h-[150px]">
-                        <span className="text-3xl mb-2">🍽️</span><p className="font-bold text-sm text-slate-600">ไม่มีรายการอาหารในวันนี้</p><p className="text-[10px] mt-1">คลิกปุ่ม "เพิ่มมื้อ" เพื่อบันทึกบิล</p>
+                        <span className="text-3xl mb-2">🍽️</span><p className="font-bold text-sm text-slate-600">ไม่มีรายการในวันนี้</p><p className="text-[10px] mt-1">คลิกปุ่ม "เพิ่มมื้อ" เพื่อบันทึกบิล</p>
                       </div>
                     ) : (
-                      selectedMeals.map(m => (
-                        <div key={m.id} className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm flex flex-col justify-between">
-                          <div className="flex justify-between items-start mb-2 cursor-pointer hover:underline" onClick={() => onViewMeal(m)}>
-                            <h5 className="font-bold text-slate-800 text-sm truncate pr-2">{m.title}</h5>
-                            <span className="font-mono font-bold text-indigo-600 text-sm whitespace-nowrap">{m.finalAmount.toLocaleString('th-TH')} ฿</span>
+                      selectedMeals.map(m => {
+                        const cat = getCategoryInfo(m, categories);
+                        return (
+                          <div key={m.id} className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm flex flex-col justify-between">
+                            <div className="flex justify-between items-start mb-2 cursor-pointer hover:underline" onClick={() => onViewMeal(m)}>
+                              <h5 className="font-bold text-slate-800 text-sm truncate pr-2 flex items-center gap-1">{m.isCustomDebt && <Icon name="account_balance_wallet" className="text-rose-500 text-[14px]"/>} {m.title}</h5>
+                              <span className={`font-mono font-bold text-sm whitespace-nowrap ${m.isCustomDebt ? 'text-rose-600' : 'text-indigo-600'}`}>{m.finalAmount.toLocaleString('th-TH')} ฿</span>
+                            </div>
+                            <div className="text-[10px] text-slate-500 mb-3 flex items-center gap-2">
+                              <span className={`px-2 py-0.5 rounded-full border font-semibold ${cat.color}`}>{cat.label}</span>
+                              <span>คนหาร: {m.participants.length} คน</span>
+                            </div>
+                            <div className="flex justify-end gap-1.5 pt-2 border-t border-slate-100">
+                              <button onClick={() => onViewMeal(m)} className="px-2 py-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md text-[10px] font-bold hover:bg-slate-100"><Icon name="visibility" className="text-[12px]"/> ดู</button>
+                              <button onClick={() => onEditItem(m)} className="p-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md hover:text-indigo-600"><Icon name="edit" className="text-[14px]"/></button>
+                              <button onClick={() => onCopyItem(m)} className="p-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md hover:text-slate-900"><Icon name="content_copy" className="text-[14px]"/></button>
+                              <button onClick={() => onDeleteMeal(m.id)} className="p-1 bg-slate-50 border border-slate-200 text-rose-500 rounded-md hover:bg-rose-50"><Icon name="delete" className="text-[14px]"/></button>
+                            </div>
                           </div>
-                          <div className="text-[10px] text-slate-500 mb-3">คนหาร: {m.participants.length} คน</div>
-                          <div className="flex justify-end gap-1.5 pt-2 border-t border-slate-100">
-                            <button onClick={() => onViewMeal(m)} className="px-2 py-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md text-[10px] font-bold hover:bg-slate-100"><Icon name="visibility" className="text-[12px]"/> ดู</button>
-                            <button onClick={() => onEditMeal(m)} className="p-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md hover:text-indigo-600"><Icon name="edit" className="text-[14px]"/></button>
-                            <button onClick={() => onCopyMeal(m)} className="p-1 bg-slate-50 border border-slate-200 text-slate-600 rounded-md hover:text-slate-900"><Icon name="content_copy" className="text-[14px]"/></button>
-                            <button onClick={() => onDeleteMeal(m.id)} className="p-1 bg-slate-50 border border-slate-200 text-rose-500 rounded-md hover:bg-rose-50"><Icon name="delete" className="text-[14px]"/></button>
-                          </div>
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                 </div>
@@ -977,7 +1030,7 @@
       );
     }
 
-    function MealsView({ meals, friends, categories, onViewMeal, onEditMeal, onCopyMeal, onDeleteMeal }) {
+    function MealsView({ meals, friends, categories, onViewMeal, onEditItem, onCopyItem, onDeleteMeal }) {
       const [searchTerm, setSearchTerm] = useState('');
       const [filterCat, setFilterCat] = useState('all');
       const [sortBy, setSortBy] = useState('date_desc');
@@ -988,7 +1041,10 @@
           const lower = searchTerm.toLowerCase();
           result = result.filter(m => m.title.toLowerCase().includes(lower) || friends.find(f => f.id === m.payerId)?.name.toLowerCase().includes(lower));
         }
-        if (filterCat !== 'all') result = result.filter(m => m.categoryId === filterCat);
+        if (filterCat !== 'all') {
+          if (filterCat === 'custom_debt') result = result.filter(m => m.isCustomDebt);
+          else result = result.filter(m => !m.isCustomDebt && m.categoryId === filterCat);
+        }
         result.sort((a, b) => {
           if (sortBy === 'date_desc') return b.date.localeCompare(a.date);
           if (sortBy === 'date_asc') return a.date.localeCompare(b.date);
@@ -1016,8 +1072,9 @@
 
           <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-1">
             <button onClick={() => setFilterCat('all')} className={`px-4 py-2 text-xs font-bold rounded-full shadow-sm whitespace-nowrap transition-colors ${filterCat === 'all' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}>ทั้งหมด ({meals.length})</button>
+            <button onClick={() => setFilterCat('custom_debt')} className={`px-4 py-2 text-xs font-semibold rounded-full whitespace-nowrap transition-colors ${filterCat === 'custom_debt' ? 'bg-rose-600 text-white shadow-sm font-bold' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}>💸 หนี้ค้าง/ยืมเงิน ({meals.filter(m=>m.isCustomDebt).length})</button>
             {categories.map(c => {
-              const count = meals.filter(m => m.categoryId === c.id).length;
+              const count = meals.filter(m => !m.isCustomDebt && m.categoryId === c.id).length;
               if(count === 0) return null;
               return <button key={c.id} onClick={() => setFilterCat(c.id)} className={`px-4 py-2 text-xs font-semibold rounded-full whitespace-nowrap transition-colors ${filterCat === c.id ? 'bg-indigo-600 text-white shadow-sm font-bold' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}>{c.label} ({count})</button>
             })}
@@ -1027,20 +1084,20 @@
             {filteredMeals.map(m => {
               const payer = friends.find(f => f.id === m.payerId);
               const parts = m.participants.map(p => friends.find(f=>f.id===p.friendId));
-              const cat = categories.find(c => c.id === m.categoryId) || DEFAULT_CATEGORIES[0];
+              const cat = getCategoryInfo(m, categories);
               
               return (
                 <div key={m.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-indigo-300 transition-colors p-5 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${cat.color || 'bg-slate-50 text-slate-600 border-slate-200'}`}>{cat.label}</span>
+                      <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${cat.color}`}>{cat.label}</span>
                       <div className="flex items-center gap-1.5 text-xs text-slate-500 font-mono"><Icon name="calendar_today" className="text-[14px] text-slate-400"/> {m.date}</div>
                     </div>
                     <h4 className="font-bold text-slate-800 text-lg mb-4 line-clamp-2">{m.title}</h4>
                     <div className="flex items-center gap-4 text-xs text-slate-500 mb-4">
-                      <p>คนจ่าย: <strong className="text-indigo-600">{payer?.name || '?'}</strong></p>
+                      <p>{m.isCustomDebt ? 'เจ้าหนี้:' : 'คนจ่าย:'} <strong className={`${m.isCustomDebt ? 'text-emerald-600' : 'text-indigo-600'}`}>{payer?.name || '?'}</strong></p>
                       <div className="flex items-center gap-1.5">
-                        <span>คนหาร ({parts.length}):</span>
+                        <span>{m.isCustomDebt ? 'ลูกหนี้' : 'คนหาร'} ({parts.length}):</span>
                         <div className="flex -space-x-1">
                           {parts.slice(0,3).map((p, i) => <div key={i} className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-[9px] font-bold border border-white ${p?.color || 'bg-slate-400'}`}>{p?.name?.charAt(0) || '?'}</div>)}
                         </div>
@@ -1049,13 +1106,13 @@
                   </div>
                   <div className="flex items-center justify-between border-t border-slate-100 pt-4">
                     <div className="text-left">
-                      <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1">ยอดรวมทั้งบิล</span>
-                      <span className="font-mono font-extrabold text-2xl text-slate-900">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
+                      <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1">ยอดสุทธิ</span>
+                      <span className={`font-mono font-extrabold text-2xl ${m.isCustomDebt ? 'text-rose-600' : 'text-slate-900'}`}>{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
                     </div>
                     <div className="flex gap-1.5 mt-3">
-                      <button onClick={() => onViewMeal(m)} className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-600 hover:text-indigo-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"><Icon name="visibility" className="text-[14px]"/> ดูบิล</button>
-                      <button onClick={() => onCopyMeal(m)} className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 shadow-sm"><Icon name="content_copy" className="text-[16px]"/></button>
-                      <button onClick={() => onEditMeal(m)} className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 shadow-sm"><Icon name="edit" className="text-[16px]"/></button>
+                      <button onClick={() => onViewMeal(m)} className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-600 hover:text-indigo-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors"><Icon name="visibility" className="text-[14px]"/> ดู</button>
+                      <button onClick={() => onCopyItem(m)} className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 shadow-sm"><Icon name="content_copy" className="text-[16px]"/></button>
+                      <button onClick={() => onEditItem(m)} className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 shadow-sm"><Icon name="edit" className="text-[16px]"/></button>
                       <button onClick={() => onDeleteMeal(m.id)} className="w-8 h-8 bg-white border border-slate-200 rounded-lg flex items-center justify-center text-rose-400 hover:text-rose-600 hover:bg-rose-50 shadow-sm transition"><Icon name="delete" className="text-[16px]"/></button>
                     </div>
                   </div>
@@ -1111,19 +1168,22 @@
     function ViewMealModal({ isOpen, onClose, meal, friends, categories, onEdit, onDelete }) {
       if (!isOpen || !meal) return null;
       const payer = friends.find(f => f.id === meal.payerId);
-      const cat = categories.find(c => c.id === meal.categoryId) || DEFAULT_CATEGORIES[0];
+      const cat = getCategoryInfo(meal, categories);
       return (
         <Modal isOpen={isOpen} onClose={onClose} noPadding>
-          <div className="bg-gradient-to-br from-indigo-700 to-indigo-900 p-6 text-white rounded-t-2xl relative">
-            <button onClick={onClose} className="absolute top-4 right-4 text-indigo-200 hover:text-white"><Icon name="close"/></button>
+          <div className={`bg-gradient-to-br ${meal.isCustomDebt ? 'from-rose-600 to-rose-800' : 'from-indigo-700 to-indigo-900'} p-6 text-white rounded-t-2xl relative`}>
+            <button onClick={onClose} className="absolute top-4 right-4 text-white/70 hover:text-white"><Icon name="close"/></button>
             <div className="flex items-center gap-2 mb-2">
               <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full bg-white/20 backdrop-blur-sm`}>{cat.label}</span>
-              <span className="text-[10px] text-indigo-200 font-mono"><Icon name="calendar_today" className="text-[12px]"/> {meal.date}</span>
+              <span className="text-[10px] text-white/70 font-mono"><Icon name="calendar_today" className="text-[12px]"/> {meal.date}</span>
+              {meal.isCustomDebt && meal.includeInAutoSettle === false && (
+                <span className="text-[10px] bg-rose-900/50 px-2 py-1 rounded-full border border-rose-500/50">🔒 ไม่รวมในยอดเคลียร์ออโต้</span>
+              )}
             </div>
             <h2 className="text-2xl font-bold mb-4">{meal.title}</h2>
             <div className="flex justify-between items-end">
               <div>
-                <p className="text-[10px] text-indigo-300 uppercase tracking-wider mb-1">ยอดรวมทั้งบิล</p>
+                <p className="text-[10px] text-white/70 uppercase tracking-wider mb-1">ยอดรวมสุทธิ</p>
                 <div className="text-4xl font-mono font-extrabold">{meal.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} <span className="text-xl">฿</span></div>
               </div>
             </div>
@@ -1131,11 +1191,11 @@
           <div className="p-6 bg-slate-50 rounded-b-2xl space-y-4">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-sm space-y-3">
               <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-                <span className="text-slate-500 font-bold flex items-center gap-1.5"><Icon name="account_balance_wallet" className="text-amber-500"/> คนสำรองจ่าย:</span>
+                <span className="text-slate-500 font-bold flex items-center gap-1.5"><Icon name="account_balance_wallet" className="text-emerald-500"/> {meal.isCustomDebt ? 'เจ้าหนี้:' : 'คนสำรองจ่าย:'}</span>
                 <span className="font-bold text-slate-800">{payer?.name || '?'}</span>
               </div>
               <div>
-                <span className="text-slate-500 font-bold flex items-center gap-1.5 mb-2"><Icon name="restaurant" className="text-rose-500"/> คนร่วมทาน ({meal.participants.length} คน):</span>
+                <span className="text-slate-500 font-bold flex items-center gap-1.5 mb-2"><Icon name={meal.isCustomDebt ? "money_off" : "restaurant"} className="text-rose-500"/> {meal.isCustomDebt ? 'ลูกหนี้' : 'คนร่วมทาน'} ({meal.participants.length} คน):</span>
                 <div className="space-y-2">
                   {meal.participants.map(p => {
                     const f = friends.find(x => x.id === p.friendId);
@@ -1145,7 +1205,7 @@
                           <div className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-[9px] font-bold ${f?.color || 'bg-slate-500'}`}>{f?.name?.charAt(0) || '?'}</div>
                           <span className="font-medium text-slate-700">{f?.name || '?'}</span>
                         </div>
-                        <span className="font-mono font-bold text-indigo-600">{p.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
+                        <span className="font-mono font-bold text-rose-600">{p.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
                       </div>
                     )
                   })}
@@ -1153,12 +1213,146 @@
               </div>
             </div>
             <div className="flex gap-2">
-              <button onClick={onEdit} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-100 shadow-sm flex items-center justify-center gap-1.5"><Icon name="edit" className="text-[18px]"/> แก้ไขมื้อนี้</button>
-              <button onClick={onDelete} className="flex-1 py-3 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl font-bold text-sm hover:bg-rose-100 shadow-sm flex items-center justify-center gap-1.5"><Icon name="delete" className="text-[18px]"/> ลบมื้อนี้</button>
+              <button onClick={onEdit} className="flex-1 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl font-bold text-sm hover:bg-slate-100 shadow-sm flex items-center justify-center gap-1.5"><Icon name="edit" className="text-[18px]"/> แก้ไข</button>
+              <button onClick={onDelete} className="flex-1 py-3 bg-rose-50 text-rose-600 border border-rose-200 rounded-xl font-bold text-sm hover:bg-rose-100 shadow-sm flex items-center justify-center gap-1.5"><Icon name="delete" className="text-[18px]"/> ลบรายการนี้</button>
             </div>
           </div>
         </Modal>
       );
+    }
+
+    function AddDebtModal({ isOpen, onClose, initialData, friends, onSubmit }) {
+      const [title, setTitle] = useState('');
+      const [amount, setAmount] = useState('');
+      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+      const [creditorId, setCreditorId] = useState('');
+      const [debtors, setDebtors] = useState({});
+      const [includeInAutoSettle, setIncludeInAutoSettle] = useState(true);
+
+      useEffect(() => {
+        if (isOpen) {
+          if (initialData) {
+            setTitle(initialData.title || '');
+            setAmount(initialData.baseAmount || '');
+            setDate(initialData.date || new Date().toISOString().split('T')[0]);
+            setCreditorId(initialData.payerId || '');
+            setIncludeInAutoSettle(initialData.includeInAutoSettle !== false);
+            const initialParts = {};
+            friends.forEach(f => initialParts[f.id] = false);
+            if (initialData.participants) initialData.participants.forEach(p => initialParts[p.friendId] = true);
+            setDebtors(initialParts);
+          } else {
+            setTitle(''); setAmount(''); setDate(new Date().toISOString().split('T')[0]);
+            setCreditorId(''); setIncludeInAutoSettle(true);
+            const initialParts = {};
+            friends.forEach(f => initialParts[f.id] = false);
+            setDebtors(initialParts);
+          }
+        }
+      }, [isOpen, initialData, friends]);
+
+      if (!isOpen) return null;
+
+      const toggleDebtor = (id) => setDebtors(prev => ({ ...prev, [id]: !prev[id] }));
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const activeDebtors = Object.keys(debtors).filter(id => debtors[id]);
+        if (!amount || !creditorId || activeDebtors.length === 0) {
+          alert('กรุณาระบุยอดเงิน เจ้าหนี้ และลูกหนี้ให้ครบถ้วน');
+          return;
+        }
+        
+        const finalAmount = parseFloat(amount);
+        const splitAmount = finalAmount / activeDebtors.length;
+        const participants = activeDebtors.map(id => ({ friendId: id, amount: splitAmount }));
+
+        const data = {
+          title: title || 'หนี้ค้าง/ยืมเงิน',
+          date, categoryId: 'custom_debt',
+          baseAmount: finalAmount, finalAmount: finalAmount,
+          discount: 0, hasVat: false, hasServiceCharge: false,
+          payerId: creditorId, participants,
+          splitMode: 'equal', roundingMode: 'actual',
+          isCustomDebt: true, includeInAutoSettle
+        };
+        onSubmit(data, initialData?.id);
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={initialData?.id ? "แก้ไขหนี้ค้าง" : "บันทึกหนี้ค้าง / ยืมเงินต่างหาก"} fullWidth>
+          <form onSubmit={handleSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">รายการ / รายละเอียดหนี้</label>
+                <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="เช่น ค่าน้ำมัน, ตั๋วหนัง, ยืมเงินสด..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" />
+              </div>
+              <div className="flex gap-3">
+                <div className="w-1/2">
+                  <label className="text-xs font-bold text-slate-700 mb-1.5 block">วันที่เกิดหนี้</label>
+                  <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" required />
+                </div>
+                <div className="w-1/2">
+                  <label className="text-xs font-bold text-rose-600 mb-1.5 block">ยอดสุทธิ (บาท) *</label>
+                  <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00" className="w-full p-3 rounded-xl border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" required />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="account_balance_wallet" className="text-emerald-600 text-[18px]"/> ใครเป็นเจ้าหนี้? (คนให้ยืม)</label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {friends.map(f => (
+                  <label key={f.id} className="cursor-pointer">
+                    <input type="radio" name="creditorId" value={f.id} checked={creditorId === f.id} onChange={(e) => setCreditorId(e.target.value)} className="peer sr-only" required />
+                    <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:ring-1 peer-checked:ring-emerald-500 transition">
+                      <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                      <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="money_off" className="text-rose-500 text-[18px]"/> ใครคือลูกหนี้? (คนยืม)</label>
+              <div className="grid grid-cols-2 gap-3">
+                {friends.map(f => {
+                  const isChecked = debtors[f.id];
+                  return (
+                    <div key={f.id} onClick={() => toggleDebtor(f.id)} className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition ${isChecked ? 'bg-rose-50/40 border-rose-300' : 'bg-white border-slate-200 opacity-60 hover:opacity-100'}`}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-rose-500 border-rose-500' : 'border-slate-300 bg-white'}`}>
+                          {isChecked && <Icon name="check" className="text-white text-[12px]"/>}
+                        </div>
+                        <span className="text-sm font-bold text-slate-800 truncate max-w-[80px]">{f.name}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Checkbox เลือกการรวมยอด/แยกยอด */}
+              <div className="mt-5 p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-start gap-2.5 cursor-pointer hover:bg-indigo-100/50 transition" onClick={() => setIncludeInAutoSettle(!includeInAutoSettle)}>
+                <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center border transition-colors shrink-0 ${includeInAutoSettle ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>
+                   {includeInAutoSettle && <Icon name="check" className="text-white text-[12px]"/>}
+                </div>
+                <div>
+                    <div className="text-sm font-bold text-indigo-800">รวมเข้ายอด "เคลียร์หนี้" อัตโนมัติ</div>
+                    <div className="text-[11px] text-indigo-600/80 leading-snug mt-1">หากนำเครื่องหมายถูกออก ยอดนี้จะแยกอยู่แค่ในประวัติ และไม่ถูกนำไปหักลบกับเพื่อนในระบบ</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
+              <button disabled={!amount || !creditorId} type="submit" className="w-2/3 bg-rose-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-rose-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <Icon name="check_circle" className="text-[18px]"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ค้าง'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )
     }
 
     function AddMealModal({ isOpen, onClose, initialData, friends, categories, openCategoryManager, onSubmit }) {
@@ -1343,139 +1537,7 @@
         </Modal>
       );
     }
-    function AddDebtModal({ isOpen, onClose, initialData, friends, onSubmit }) {
-      const [title, setTitle] = useState('');
-      const [amount, setAmount] = useState('');
-      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-      const [creditorId, setCreditorId] = useState('');
-      const [debtors, setDebtors] = useState({});
-      const [includeInAutoSettle, setIncludeInAutoSettle] = useState(true);
 
-      useEffect(() => {
-        if (isOpen) {
-          if (initialData) {
-            setTitle(initialData.title || '');
-            setAmount(initialData.baseAmount || '');
-            setDate(initialData.date || new Date().toISOString().split('T')[0]);
-            setCreditorId(initialData.payerId || '');
-            setIncludeInAutoSettle(initialData.includeInAutoSettle !== false);
-            const initialParts = {};
-            friends.forEach(f => initialParts[f.id] = false);
-            if (initialData.participants) initialData.participants.forEach(p => initialParts[p.friendId] = true);
-            setDebtors(initialParts);
-          } else {
-            setTitle(''); setAmount(''); setDate(new Date().toISOString().split('T')[0]);
-            setCreditorId(''); setIncludeInAutoSettle(true);
-            const initialParts = {};
-            friends.forEach(f => initialParts[f.id] = false);
-            setDebtors(initialParts);
-          }
-        }
-      }, [isOpen, initialData, friends]);
-
-      if (!isOpen) return null;
-
-      const toggleDebtor = (id) => setDebtors(prev => ({ ...prev, [id]: !prev[id] }));
-
-      const handleSubmit = (e) => {
-        e.preventDefault();
-        const activeDebtors = Object.keys(debtors).filter(id => debtors[id]);
-        if (!amount || !creditorId || activeDebtors.length === 0) {
-          alert('กรุณาระบุยอดเงิน เจ้าหนี้ และลูกหนี้ให้ครบถ้วน');
-          return;
-        }
-        
-        const finalAmount = parseFloat(amount);
-        const splitAmount = finalAmount / activeDebtors.length;
-        const participants = activeDebtors.map(id => ({ friendId: id, amount: splitAmount }));
-
-        const data = {
-          title: title || 'หนี้ค้าง/ยืมเงิน',
-          date, categoryId: 'custom_debt',
-          baseAmount: finalAmount, finalAmount: finalAmount,
-          discount: 0, hasVat: false, hasServiceCharge: false,
-          payerId: creditorId, participants,
-          splitMode: 'equal', roundingMode: 'actual',
-          isCustomDebt: true, includeInAutoSettle
-        };
-        onSubmit(data, initialData?.id);
-      };
-
-      return (
-        <Modal isOpen={isOpen} onClose={onClose} title={initialData?.id ? "แก้ไขหนี้ค้าง" : "บันทึกหนี้ค้าง / ยืมเงินต่างหาก"} fullWidth>
-          <form onSubmit={handleSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
-            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <div>
-                <label className="text-xs font-bold text-slate-700 mb-1.5 block">รายการ / รายละเอียดหนี้</label>
-                <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="เช่น ค่าน้ำมัน, ตั๋วหนัง, ยืมเงินสด..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" />
-              </div>
-              <div className="flex gap-3">
-                <div className="w-1/2">
-                  <label className="text-xs font-bold text-slate-700 mb-1.5 block">วันที่เกิดหนี้</label>
-                  <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" required />
-                </div>
-                <div className="w-1/2">
-                  <label className="text-xs font-bold text-rose-600 mb-1.5 block">ยอดสุทธิ (บาท) *</label>
-                  <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00" className="w-full p-3 rounded-xl border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" required />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="account_balance_wallet" className="text-emerald-600 text-[18px]"/> ใครเป็นเจ้าหนี้? (คนให้ยืม)</label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {friends.map(f => (
-                  <label key={f.id} className="cursor-pointer">
-                    <input type="radio" name="creditorId" value={f.id} checked={creditorId === f.id} onChange={(e) => setCreditorId(e.target.value)} className="peer sr-only" required />
-                    <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:ring-1 peer-checked:ring-emerald-500 transition">
-                      <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
-                      <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
-              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="money_off" className="text-rose-500 text-[18px]"/> ใครคือลูกหนี้? (คนยืม)</label>
-              <div className="grid grid-cols-2 gap-3">
-                {friends.map(f => {
-                  const isChecked = debtors[f.id];
-                  return (
-                    <div key={f.id} onClick={() => toggleDebtor(f.id)} className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition ${isChecked ? 'bg-rose-50/40 border-rose-300' : 'bg-white border-slate-200 opacity-60 hover:opacity-100'}`}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-rose-500 border-rose-500' : 'border-slate-300 bg-white'}`}>
-                          {isChecked && <Icon name="check" className="text-white text-[12px]"/>}
-                        </div>
-                        <span className="text-sm font-bold text-slate-800 truncate max-w-[80px]">{f.name}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-
-              {/* Checkbox เลือกการรวมยอด/แยกยอด */}
-              <div className="mt-5 p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-start gap-2.5 cursor-pointer hover:bg-indigo-100/50 transition" onClick={() => setIncludeInAutoSettle(!includeInAutoSettle)}>
-                <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center border transition-colors shrink-0 ${includeInAutoSettle ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>
-                   {includeInAutoSettle && <Icon name="check" className="text-white text-[12px]"/>}
-                </div>
-                <div>
-                    <div className="text-sm font-bold text-indigo-800">รวมเข้ายอด "เคลียร์หนี้" อัตโนมัติ</div>
-                    <div className="text-[11px] text-indigo-600/80 leading-snug mt-1">หากนำเครื่องหมายถูกออก ยอดนี้จะแยกอยู่แค่ในประวัติ และไม่ถูกนำไปหักลบกับเพื่อนในระบบ</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
-              <button disabled={!amount || !creditorId} type="submit" className="w-2/3 bg-rose-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-rose-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
-                <Icon name="check_circle" className="text-[18px]"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ค้าง'}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )
-    }
     function CategoryManagerModal({ isOpen, onClose, categories, showConfirm }) {
       const [newCat, setNewCat] = useState('');
       const [editingId, setEditingId] = useState(null);
@@ -1486,7 +1548,7 @@
         if (newCat.trim()) {
           await db.collection('categories').add({
             label: newCat.trim(),
-            color: 'bg-slate-50 text-slate-700 border-slate-200', // สีพื้นฐานสำหรับอันที่สร้างใหม่
+            color: 'bg-slate-50 text-slate-700 border-slate-200', 
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           setNewCat('');
@@ -1559,185 +1621,6 @@
           </div>
         </Modal>
       );
-    }
-
-    function QRCodeModal({ isOpen, onClose, transfer, onSettle }) {
-      const [isEditing, setIsEditing] = useState(false);
-      const [promptPay, setPromptPay] = useState('');
-      const [bankName, setBankName] = useState('');
-      const [bankAccount, setBankAccount] = useState('');
-
-      useEffect(() => {
-        if (transfer) {
-          setPromptPay(transfer.promptPay || '');
-          setBankName(transfer.bankName || '');
-          setBankAccount(transfer.bankAccount || '');
-          setIsEditing(false);
-        }
-      }, [transfer]);
-
-      const handleSaveBank = async () => {
-        await db.collection('friends').doc(transfer.toId).update({ promptPay, bankName, bankAccount });
-        setIsEditing(false);
-        alert('อัปเดตข้อมูลบัญชีเรียบร้อย');
-      };
-
-      if (!transfer) return null;
-
-      return (
-        <Modal isOpen={isOpen} onClose={onClose} noPadding>
-          <div className="bg-gradient-to-br from-indigo-900 to-blue-800 p-5 text-white relative">
-            <button onClick={onClose} className="absolute top-4 right-4 z-10 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/30 rounded-full p-1 transition flex items-center justify-center">
-              <Icon name="close" className="text-lg" />
-            </button>
-            <div className="flex items-center gap-3 mb-1 pr-6">
-              <div className="bg-yellow-400 p-1.5 rounded-lg"><Icon name="qr_code_scanner" className="text-indigo-900 text-xl"/></div>
-              <h2 className="text-lg font-bold">PromptPay QR <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 border border-emerald-400/30 rounded-md ml-2">ระบุยอดเงินให้อัตโนมัติ</span></h2>
-            </div>
-            <p className="text-indigo-200 text-sm ml-12">{transfer.fromName} ➔ {transfer.toName}</p>
-          </div>
-
-          <div className="p-5 bg-slate-50 rounded-b-2xl">
-            {isEditing ? (
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm animate-fade-in">
-                <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
-                  <h3 className="font-bold text-indigo-700 flex items-center gap-2"><Icon name="credit_card"/> บันทึกบัญชีของ {transfer.toName}</h3>
-                  <button onClick={()=>setIsEditing(false)} className="text-[11px] font-bold text-slate-400 hover:text-slate-600 bg-slate-100 px-2 py-1 rounded">ยกเลิก</button>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-xs font-bold text-slate-700 block mb-1.5">เบอร์พร้อมเพย์ (Mobile / ID Card)</label>
-                    <input value={promptPay} onChange={e=>setPromptPay(e.target.value)} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-mono outline-none focus:border-indigo-500 bg-slate-50" />
-                  </div>
-                  <div className="flex gap-3">
-                    <div className="w-1/2">
-                      <label className="text-xs font-bold text-slate-700 block mb-1.5">ชื่อธนาคาร</label>
-                      <input value={bankName} onChange={e=>setBankName(e.target.value)} className="w-full p-3 border border-slate-300 rounded-xl text-sm outline-none focus:border-indigo-500 bg-slate-50" />
-                    </div>
-                    <div className="w-1/2">
-                      <label className="text-xs font-bold text-slate-700 block mb-1.5">เลขบัญชี</label>
-                      <input value={bankAccount} onChange={e=>setBankAccount(e.target.value)} className="w-full p-3 border border-slate-300 rounded-xl text-sm font-mono outline-none focus:border-indigo-500 bg-slate-50" />
-                    </div>
-                  </div>
-                  <button onClick={handleSaveBank} className="w-full py-3.5 bg-indigo-600 text-white font-bold rounded-xl mt-2 shadow-md hover:bg-indigo-700 transition">บันทึกและอัปเดต QR Code</button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4 animate-fade-in">
-                <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-2xl text-center shadow-sm">
-                  <p className="text-[11px] font-bold text-emerald-800 mb-1">ยอดเงินโอนสุทธิ (ระบุให้แล้ว):</p>
-                  <h3 className="text-4xl font-mono font-extrabold text-emerald-600">{transfer.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</h3>
-                  <p className="text-[10px] text-emerald-700 mt-2 font-medium">สแกนแล้ว ยอดจะขึ้นตรงตามนี้ทันทีโดยไม่ต้องระบุตัวเลขเอง!</p>
-                </div>
-
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-                  <PromptPayQR promptPay={transfer.promptPay} amount={transfer.amount} />
-                </div>
-
-                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-xs space-y-2 text-slate-600">
-                  <div className="flex justify-between"><span className="text-slate-400">ผู้รับเงิน:</span> <strong className="text-slate-800">{transfer.toName}</strong></div>
-                  <div className="flex justify-between"><span className="text-slate-400">เบอร์/ID พร้อมเพย์:</span> <strong className="font-mono text-slate-800">{transfer.promptPay || '-'}</strong></div>
-                  <div className="flex justify-between"><span className="text-slate-400">บัญชีธนาคาร:</span> <span className="font-mono text-slate-800">{transfer.bankName ? `${transfer.bankName} ${transfer.bankAccount}` : '-'}</span></div>
-                  <div className="flex justify-between pt-2 border-t border-slate-100"><span className="text-slate-400">ผู้โอนเงิน:</span> <span className="text-slate-800 font-medium">{transfer.fromName}</span></div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => { navigator.clipboard.writeText(transfer.amount.toString()); alert('คัดลอกยอดเงินแล้ว'); }} className="py-3 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 flex items-center justify-center gap-1.5 hover:bg-emerald-100 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกยอด</button>
-                  <button onClick={() => { navigator.clipboard.writeText(transfer.promptPay || transfer.bankAccount); alert('คัดลอกเลขบัญชีแล้ว'); }} className="py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 hover:bg-slate-200 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกเลขบัญชี</button>
-                </div>
-
-                <div className="flex justify-between items-center pt-2 px-1">
-                  <button onClick={()=>setIsEditing(true)} className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 hover:underline"><Icon name="edit" className="text-[14px]"/> แก้ไขเลขบัญชี</button>
-                  <button onClick={() => { onSettle(transfer); onClose(); }} className="text-[11px] text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-100"><Icon name="check_circle" className="text-[14px]"/> เคลียร์ยอดเลย</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </Modal>
-      );
-    }
-
-    function ImageExportModal({ isOpen, onClose, settlementData, meals, friends }) {
-      const summaryRef = useRef(null);
-      const [style, setStyle] = useState('notebook');
-      const handleDownload = async () => {
-        if (summaryRef.current) {
-          const canvas = await html2canvas(summaryRef.current, { scale: 2, backgroundColor: style === 'notebook' ? '#f8fafc' : '#ffffff' });
-          const link = document.createElement('a'); link.download = `สรุปยอดหารค่าข้าว_${new Date().toISOString().split('T')[0]}.png`;
-          link.href = canvas.toDataURL(); link.click();
-        }
-      };
-      if (!isOpen) return null;
-      return (
-        <Modal isOpen={isOpen} onClose={onClose} title="บันทึกสรุปยอดเป็นรูปภาพ" fullWidth>
-          <div className="p-4 sm:p-6 bg-slate-50 flex flex-col items-center">
-            <div className="flex items-center gap-3 mb-6 w-full max-w-sm">
-              <span className="text-xs font-bold text-slate-600">รูปแบบภาพ:</span>
-              <div className="flex bg-slate-200 p-1 rounded-lg flex-1">
-                <button onClick={()=>setStyle('notebook')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'notebook' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-500'}`}>📝 สไตล์สมุดโน้ต</button>
-                <button onClick={()=>setStyle('modern')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'modern' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>✨ สไตล์โมเดิร์น</button>
-              </div>
-            </div>
-
-            <div className="max-h-[55vh] overflow-y-auto w-full flex justify-center pb-4 hide-scrollbar">
-              <div ref={summaryRef} className={`w-full max-w-sm p-6 sm:p-8 shadow-lg rounded-3xl ${style === 'notebook' ? 'bg-notebook border-2 border-amber-200 font-sans' : 'bg-white border border-slate-200 font-sans'}`}>
-                <div className="text-center border-b border-dashed border-slate-300 pb-5 mb-5">
-                  <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
-                  <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
-                  <p className="text-xs text-slate-500 font-mono mt-1.5">ยอดค้างจ่าย {settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ ({settlementData.activeMealsList.length} มื้อ)</p>
-                </div>
-
-                <div className="space-y-2 mb-6">
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-xs font-bold text-slate-800">📌 ยอดที่ต้องโอนจริง <span className="text-slate-500 font-normal">(หักลบแล้ว)</span>:</h3>
-                    <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">โอนสุทธิ</span>
-                  </div>
-                  {settlementData.transfers.map((t, i) => (
-                    <div key={i} className={`flex justify-between items-center p-3 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'}`}>
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                        <span className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] shadow-inner ${style === 'notebook' ? 'bg-amber-500' : 'bg-indigo-500'}`}>{i+1}</span>
-                        <span>{t.fromName} ➔ {t.toName}</span>
-                      </div>
-                      <span className="font-mono font-extrabold text-sm text-rose-600">{t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
-                    </div>
-                  ))}
-                  {settlementData.transfers.length === 0 && <div className="text-center text-xs font-bold text-emerald-600 py-3 bg-emerald-50 rounded-xl border border-emerald-200">✅ ไม่มีหนี้ค้างชำระ</div>}
-                </div>
-
-                <div className="space-y-3 mb-6 border-t border-dashed border-slate-300 pt-5">
-                  <h3 className="text-xs font-bold text-slate-800 mb-2">📌 รายละเอียดการออกเงินรายมื้อ (ที่ยังค้างจ่าย):</h3>
-                  {settlementData.activeMealsList.map((m, i) => {
-                    const payerName = friends.find(f => f.id === m.payerId)?.name || 'Unknown';
-                    const perPerson = m.finalAmount / m.participants.length;
-                    return (
-                      <div key={i} className={`p-3.5 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'} text-[11px]`}>
-                        <div className="flex justify-between font-bold text-slate-800 mb-1.5">
-                          <span className="truncate pr-2">• {m.title}</span>
-                          <span className="font-mono text-indigo-700 shrink-0">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
-                        </div>
-                        <div className="flex justify-between text-slate-500">
-                          <span>จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
-                          <span>(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {settlementData.activeMealsList.length === 0 && <div className="text-xs text-slate-400">ไม่มีรายการ</div>}
-                </div>
-
-                <div className="mt-8 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
-              </div>
-            </div>
-
-            <div className="w-full flex gap-3 mt-4">
-              <button onClick={onClose} className="px-6 py-3.5 rounded-xl border border-slate-300 font-bold text-sm text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">ปิด</button>
-              <button onClick={handleDownload} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition">
-                <Icon name="file_download"/> ดาวน์โหลดรูปภาพ
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )
     }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
