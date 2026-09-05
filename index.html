@@ -556,7 +556,7 @@
                   onSettleDebt={handleSettleDebt} 
                   onOpenQR={(data) => openModal('qr', data)} 
                   exportToImage={() => openModal('export')} 
-                  shareToLine={shareToLine} 
+                  shareToLine={() => openModal('lineShare')} 
                 />
               )}
               {activeTab === 'calendar' && (
@@ -649,7 +649,8 @@
 
           <CategoryManagerModal isOpen={modals.category} onClose={() => closeModal('category')} categories={categories} showConfirm={showConfirm} />
           <QRCodeModal isOpen={modals.qr} onClose={() => closeModal('qr')} transfer={selectedTransfer} onSettle={handleSettleDebt} />
-          <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} settlementData={settleData} meals={meals} friends={friends} />
+         <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} meals={meals} friends={friends} settledDebts={settledDebts} />
+         <LineShareModal isOpen={modals.lineShare} onClose={() => closeModal('lineShare')} meals={meals} friends=   {friends} settledDebts={settledDebts} />
 
           <ViewMealModal isOpen={modals.viewMeal} onClose={() => closeModal('viewMeal')} meal={viewingMeal} friends={friends} categories={categories}
             onEdit={() => { closeModal('viewMeal'); handleEditItem(viewingMeal); }}
@@ -689,7 +690,7 @@
             </div>
             <div className="flex flex-wrap gap-2">
               <button onClick={exportToImage} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold hover:bg-amber-100 flex items-center gap-1.5 transition"><Icon name="image" className="text-[16px]"/> บันทึกรูปภาพ</button>
-              <button onClick={shareToLine} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon name="share" className="text-[16px]"/> แชร์ LINE</button>
+              <button onClick={openLineShare} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon name="share" className="text-[16px]"/> แชร์ LINE</button>
             </div>
           </div>
 
@@ -1692,87 +1693,85 @@
       );
     }
 
-    function ImageExportModal({ isOpen, onClose, settlementData, meals, friends }) {
-      const summaryRef = useRef(null);
-      const [style, setStyle] = useState('notebook');
-      const handleDownload = async () => {
-        if (summaryRef.current) {
-          const canvas = await html2canvas(summaryRef.current, { scale: 2, backgroundColor: style === 'notebook' ? '#f8fafc' : '#ffffff' });
-          const link = document.createElement('a'); link.download = `สรุปยอดหารค่าข้าว_${new Date().toISOString().split('T')[0]}.png`;
-          link.href = canvas.toDataURL(); link.click();
+    function LineShareModal({ isOpen, onClose, meals, friends, settledDebts }) {
+      const [dateScope, setDateScope] = useState('all');
+      const [netMode, setNetMode] = useState('net');
+
+      const currentMonthStr = new Date().toISOString().slice(0, 7);
+      const targetMonth = dateScope === 'month' ? currentMonthStr : null;
+      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, targetMonth), [meals, friends, settledDebts, targetMonth]);
+
+      const generateText = () => {
+        let text = `🍽️ สรุปบิลหารค่าข้าว - ${dateScope === 'month' ? 'ประจำเดือนนี้' : 'ทริปหารค่าอาหาร'}\n`;
+        text += `📅 ช่วงเวลา: ${dateScope === 'month' ? THAI_MONTHS[new Date().getMonth()] : 'ยอดรวมสะสมทั้งหมด'}\n`;
+        text += `💰 ยอดรวมทั้งหมด: ${settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ (${settlementData.activeMealsList.length} รายการ)\n`;
+        text += `----------------------------------------\n`;
+        text += `⚖️ สรุปยอดหักลบหนี้ (${netMode === 'net' ? 'Netting รายคู่' : 'รวบยอดขั้นต่ำ'}):\n`;
+        if (settlementData.transfers.length === 0) {
+          text += `✅ ไม่มีหนี้ค้างชำระ\n`;
+        } else {
+          settlementData.transfers.forEach(t => {
+            text += `👉 ${t.fromName} โอนให้ ${t.toName}: ${t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿`;
+            if (t.promptPay) text += ` (พร้อมเพย์: ${t.promptPay})`;
+            else if (t.bankAccount) text += ` (${t.bankName} ${t.bankAccount})`;
+            text += `\n`;
+          });
         }
+        text += `----------------------------------------\n`;
+        text += `📋 รายละเอียดแต่ละคน:\n`;
+        friends.forEach(f => {
+          const b = settlementData.balances[f.id];
+          if(b) {
+            text += `• ${f.name}: ออกไป ${b.totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ / กินไป ${b.totalOwed.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ → ${b.net >= 0 ? '🟢 ได้คืน +' + b.net.toLocaleString('th-TH', {minimumFractionDigits:2}) : '🔴 ต้องจ่าย ' + b.net.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿\n`;
+          }
+        });
+        text += `\n✨ คำนวณโดย MealSplit TH`;
+        return text;
       };
+
+      const handleCopy = () => {
+        navigator.clipboard.writeText(generateText());
+        alert('คัดลอกข้อความสรุปเรียบร้อย! นำไปวางในแชท LINE ได้เลย');
+        onClose();
+      };
+
       if (!isOpen) return null;
       return (
-        <Modal isOpen={isOpen} onClose={onClose} title="บันทึกสรุปยอดเป็นรูปภาพ" fullWidth>
-          <div className="p-4 sm:p-6 bg-slate-50 flex flex-col items-center">
-            <div className="flex items-center gap-3 mb-6 w-full max-w-sm">
-              <span className="text-xs font-bold text-slate-600">รูปแบบภาพ:</span>
-              <div className="flex bg-slate-200 p-1 rounded-lg flex-1">
-                <button onClick={()=>setStyle('notebook')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'notebook' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-500'}`}>📝 สไตล์สมุดโน้ต</button>
-                <button onClick={()=>setStyle('modern')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'modern' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>✨ สไตล์โมเดิร์น</button>
+        <Modal isOpen={isOpen} onClose={onClose} title="คัดลอกสรุปส่งเข้ากลุ่ม LINE" fullWidth>
+          <div className="p-4 sm:p-6 bg-slate-50 space-y-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <label className="text-xs font-bold text-slate-600 mb-1.5 block">ขอบเขตข้อมูล:</label>
+                <div className="flex bg-slate-200 p-1 rounded-lg">
+                  <button onClick={()=>setDateScope('all')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${dateScope === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>ทั้งหมด ({meals.length} รายการ)</button>
+                  <button onClick={()=>setDateScope('month')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${dateScope === 'month' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เฉพาะเดือนนี้</button>
+                </div>
+              </div>
+              <div className="flex-1">
+                <label className="text-xs font-bold text-slate-600 mb-1.5 block">รูปแบบสรุปยอดหนี้:</label>
+                <div className="flex bg-slate-200 p-1 rounded-lg">
+                  <button onClick={()=>setNetMode('net')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${netMode === 'net' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>หักลบรายคู่</button>
+                  <button onClick={()=>setNetMode('gross')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${netMode === 'gross' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>รวบยอดขั้นต่ำ</button>
+                </div>
               </div>
             </div>
 
-            <div className="max-h-[55vh] overflow-y-auto w-full flex justify-center pb-4 hide-scrollbar">
-              <div ref={summaryRef} className={`w-full max-w-sm p-6 sm:p-8 shadow-lg rounded-3xl ${style === 'notebook' ? 'bg-notebook border-2 border-amber-200 font-sans' : 'bg-white border border-slate-200 font-sans'}`}>
-                <div className="text-center border-b border-dashed border-slate-300 pb-5 mb-5">
-                  <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
-                  <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
-                  <p className="text-xs text-slate-500 font-mono mt-1.5">ยอดค้างจ่าย {settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ ({settlementData.activeMealsList.length} มื้อ)</p>
-                </div>
-
-                <div className="space-y-2 mb-6">
-                  <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-xs font-bold text-slate-800">📌 ยอดที่ต้องโอนจริง <span className="text-slate-500 font-normal">(หักลบแล้ว)</span>:</h3>
-                    <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">โอนสุทธิ</span>
-                  </div>
-                  {settlementData.transfers.map((t, i) => (
-                    <div key={i} className={`flex justify-between items-center p-3 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'}`}>
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                        <span className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] shadow-inner ${style === 'notebook' ? 'bg-amber-500' : 'bg-indigo-500'}`}>{i+1}</span>
-                        <span>{t.fromName} ➔ {t.toName}</span>
-                      </div>
-                      <span className="font-mono font-extrabold text-sm text-rose-600">{t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
-                    </div>
-                  ))}
-                  {settlementData.transfers.length === 0 && <div className="text-center text-xs font-bold text-emerald-600 py-3 bg-emerald-50 rounded-xl border border-emerald-200">✅ ไม่มีหนี้ค้างชำระ</div>}
-                </div>
-
-                <div className="space-y-3 mb-6 border-t border-dashed border-slate-300 pt-5">
-                  <h3 className="text-xs font-bold text-slate-800 mb-2">📌 รายละเอียดการออกเงินรายมื้อ (ที่ยังค้างจ่าย):</h3>
-                  {settlementData.activeMealsList.map((m, i) => {
-                    const payerName = friends.find(f => f.id === m.payerId)?.name || 'Unknown';
-                    const perPerson = m.finalAmount / m.participants.length;
-                    return (
-                      <div key={i} className={`p-3.5 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'} text-[11px]`}>
-                        <div className="flex justify-between font-bold text-slate-800 mb-1.5">
-                          <span className="truncate pr-2">• {m.title}</span>
-                          <span className="font-mono text-indigo-700 shrink-0">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
-                        </div>
-                        <div className="flex justify-between text-slate-500">
-                          <span>จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
-                          <span>(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {settlementData.activeMealsList.length === 0 && <div className="text-xs text-slate-400">ไม่มีรายการ</div>}
-                </div>
-
-                <div className="mt-8 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
+            <div>
+              <label className="text-xs font-bold text-slate-600 mb-1.5 block">ตัวอย่างข้อความ (ที่จะถูกคัดลอก):</label>
+              <div className="bg-slate-900 text-emerald-400 font-mono text-xs p-4 rounded-2xl whitespace-pre-wrap max-h-60 overflow-y-auto shadow-inner border border-slate-800">
+                {generateText()}
               </div>
             </div>
 
-            <div className="w-full flex gap-3 mt-4">
+            <div className="flex gap-3 pt-2">
               <button onClick={onClose} className="px-6 py-3.5 rounded-xl border border-slate-300 font-bold text-sm text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">ปิด</button>
-              <button onClick={handleDownload} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition">
-                <Icon name="file_download"/> ดาวน์โหลดรูปภาพ
+              <button onClick={handleCopy} className="flex-1 bg-[#06C755] hover:bg-[#05b34c] text-white font-bold py-3.5 rounded-xl text-sm shadow-md flex items-center justify-center gap-2 transition">
+                <Icon name="content_copy"/> คัดลอกข้อความลงคลิปบอร์ด
               </button>
             </div>
           </div>
         </Modal>
-      )
+      );
     }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
