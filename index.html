@@ -556,7 +556,7 @@
                   onSettleDebt={handleSettleDebt} 
                   onOpenQR={(data) => openModal('qr', data)} 
                   exportToImage={() => openModal('export')} 
-                  shareToLine={() => openModal('lineShare')} 
+                  openLineShare={() => openModal('lineShare')}
                 />
               )}
               {activeTab === 'calendar' && (
@@ -673,7 +673,7 @@
     // ==========================================
     // 6. EXTRA COMPONENTS
     // ==========================================
-    function SettlementView({ settlementData, meals, friends, onSettleDebt, onOpenQR, exportToImage, shareToLine }) {
+    function SettlementView({ settlementData, meals, friends, onSettleDebt, onOpenQR, exportToImage, openLineShare }) {
       const [expandedId, setExpandedId] = useState(null);
       return (
         <div className="space-y-6 animate-fade-in pb-10">
