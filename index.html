@@ -1189,14 +1189,31 @@
                 <div className="flex justify-between items-end gap-3">
                   <div className="w-1/2">
                     <label className="text-xs font-bold text-rose-600 mb-1.5 block">ยอดเงินรวม (บาท) *</label>
-                    <input name="amount" type="number" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" className="w-full p-3 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" required />
+                    <input 
+                      name="amount" 
+                      type="text" 
+                      inputMode="decimal" 
+                      value={amount} 
+                      onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} 
+                      placeholder="0.00" 
+                      className="w-full p-3 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" 
+                      required 
+                    />
                   </div>
                   <div className="w-1/2 flex flex-col justify-end">
                     <div className="flex items-center gap-3 mb-2 text-[11px] sm:text-xs font-semibold text-slate-600">
                       <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" name="hasServiceCharge" checked={hasSc} onChange={e=>setHasSc(e.target.checked)} className="w-3.5 h-3.5 text-indigo-600 rounded" /> + Service 10%</label>
                       <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" name="hasVat" checked={hasVat} onChange={e=>setHasVat(e.target.checked)} className="w-3.5 h-3.5 text-indigo-600 rounded" /> + VAT 7%</label>
                     </div>
-                    <input name="discount" type="number" step="0.01" value={discount} onChange={e=>setDiscount(e.target.value)} placeholder="ส่วนลด (ถ้ามี)" className="w-full p-2.5 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 text-sm font-mono" />
+                    <input 
+                      name="discount" 
+                      type="text" 
+                      inputMode="decimal" 
+                      value={discount} 
+                      onChange={e => setDiscount(e.target.value.replace(/[^0-9.]/g, ''))} 
+                      placeholder="ส่วนลด (ถ้ามี)" 
+                      className="w-full p-2.5 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 text-sm font-mono" 
+                    />
                   </div>
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-100 gap-2">
