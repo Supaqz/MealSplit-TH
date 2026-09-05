@@ -1162,8 +1162,11 @@
 
       return (
         <Modal isOpen={isOpen} onClose={onClose} noPadding>
-          <div className="bg-gradient-to-br from-indigo-900 to-blue-800 p-5 text-white">
-            <div className="flex items-center gap-3 mb-1">
+          <div className="bg-gradient-to-br from-indigo-900 to-blue-800 p-5 text-white relative">
+            <button onClick={onClose} className="absolute top-4 right-4 z-10 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/30 rounded-full p-1 transition flex items-center justify-center">
+              <Icon name="close" className="text-lg" />
+            </button>
+            <div className="flex items-center gap-3 mb-1 pr-6">
               <div className="bg-yellow-400 p-1.5 rounded-lg"><Icon name="qr_code_scanner" className="text-indigo-900 text-xl"/></div>
               <h2 className="text-lg font-bold">PromptPay QR <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 border border-emerald-400/30 rounded-md ml-2">ระบุยอดเงินให้อัตโนมัติ</span></h2>
             </div>
