@@ -4,16 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MealSplit TH - ระบบหารค่าข้าว & หักลบหนี้อัตโนมัติ</title>
+  
+  <!-- ไอคอนโลโก้แอป -->
   <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/3170/3170733.png">
+  
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   
+  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+  <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+
+  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
@@ -98,7 +106,6 @@
       const balances = {};
       friends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
 
-      // คำนวณแบบ 1 ต่อ 1 เพื่อทำหน้าสูตรคำนวณ
       const directDebts = {};
       const directHistory = {}; 
       
@@ -111,7 +118,7 @@
         });
       });
 
-      let totalExpense = 0; // ยอดรวมตลอดกาล
+      let totalExpense = 0; 
       
       meals.forEach(m => {
         totalExpense += m.finalAmount;
@@ -124,7 +131,6 @@
             balances[p.friendId].totalOwed += p.amount;
             balances[p.friendId].net -= p.amount;
             
-            // คำนวณใครเป็นหนี้ใคร (p.friendId ติดหนี้คนจ่าย m.payerId)
             if (p.friendId !== m.payerId) {
               directDebts[p.friendId][m.payerId] += p.amount;
               directHistory[p.friendId][m.payerId].push({ mealTitle: m.title, date: m.date, amount: p.amount });
@@ -133,18 +139,17 @@
         });
       });
 
-      // หักลบรายการที่เคลียร์ไปแล้ว
       settledDebts.forEach(s => {
         if(balances[s.fromId] && balances[s.toId]) {
           balances[s.fromId].net += s.amount;
           balances[s.toId].net -= s.amount;
-          directDebts[s.fromId][s.toId] -= s.amount; // ตัดหนี้ที่เคยเคลียร์แล้ว
+          directDebts[s.fromId][s.toId] -= s.amount; 
         }
       });
 
       const transfers = [];
       const processedPairs = new Set();
-      let activeMealsSet = new Set(); // เก็บเฉพาะมื้อที่ยังค้างจ่าย
+      let activeMealsSet = new Set();
 
       friends.forEach(f1 => {
         friends.forEach(f2 => {
@@ -186,7 +191,6 @@
             fromOwesToTotal = historyFromOwesTo.reduce((s, h) => s + h.amount, 0) - settledFromToTotal;
             toOwesFromTotal = historyToOwesFrom.reduce((s, h) => s + h.amount, 0) - settledToFromTotal;
 
-            // Mark active meals (เฉพาะมื้อที่เกี่ยวข้องกับคนยังมีหนี้)
             meals.forEach(m => {
               if ((m.payerId === toId && m.participants.some(p => p.friendId === fromId)) ||
                   (m.payerId === fromId && m.participants.some(p => p.friendId === toId))) {
@@ -213,7 +217,6 @@
 
       transfers.sort((a, b) => b.amount - a.amount);
 
-      // คำนวณ "ยอดรวมของรอบนี้ (เฉพาะที่ยังไม่เคลียร์)"
       let activeTotalExpense = 0;
       let activeMealsList = [];
       activeMealsSet.forEach(mealId => {
@@ -244,7 +247,6 @@
               </div>
             )}
             <div className={`${noPadding ? '' : 'p-0'} overflow-y-auto hide-scrollbar flex-1 bg-white relative`}>
-              {/* ถ้าไม่มี Title bar ด้านบน จะโชว์ปุ่มกากบาทแบบลอย (ใช้กับ ViewMeal อย่างเดียว) */}
               {!title && !noPadding && <button onClick={onClose} className="absolute top-4 right-4 z-10 text-slate-400 hover:text-white bg-slate-100/20 hover:bg-slate-800/50 rounded-full p-1 transition"><Icon name="close" className="text-xl"/></button>}
               {children}
             </div>
@@ -293,7 +295,7 @@
           setMeals(snap.docs.map(d => ({id: d.id, ...d.data()})));
           setIsLoading(false);
         });
-        const unsubCategories = db.collection('categories').onSnapshot(snap => {
+        const unsubCategories = db.collection('categories').orderBy('createdAt', 'asc').onSnapshot(snap => {
           if (snap.docs.length > 0) setCategories(snap.docs.map(d => ({id: d.id, ...d.data()})));
         });
         const unsubSettled = db.collection('settled_debts').onSnapshot(snap => setSettledDebts(snap.docs.map(d => ({id: d.id, ...d.data()}))));
@@ -421,7 +423,6 @@
                 </div>
               </div>
               <div className="flex gap-2">
-                <button className="hidden sm:flex items-center gap-1 px-3 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition"><Icon name="table_view" className="text-sm"/> Google Sheets</button>
                 <button onClick={shareToLine} className="hidden sm:flex items-center gap-1 px-3 py-2 border border-slate-200 bg-white text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-50 transition"><Icon name="share" className="text-sm text-[#06C755]"/> แชร์เข้า LINE</button>
                 <button onClick={() => openModal('addMeal')} className="flex items-center gap-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow-md hover:bg-indigo-700 transition"><Icon name="add" className="text-sm"/> ลงบันทึกมื้อใหม่</button>
               </div>
@@ -545,7 +546,7 @@
           )}
 
           <Modal isOpen={modals.addFriend} onClose={() => closeModal('addFriend')} title={editingFriend ? "แก้ไขข้อมูลเพื่อน" : "เพิ่มรายชื่อเพื่อน & บัญชีรับเงิน"}>
-            <form onSubmit={handleAddFriend} className="space-y-4 p-5">
+            <form key={editingFriend?.id || 'new'} onSubmit={handleAddFriend} className="space-y-4 p-5">
               <div>
                 <label className="text-xs font-bold text-slate-700 mb-1.5 block">ชื่อเพื่อน / ชื่อเล่น *</label>
                 <input name="name" defaultValue={editingFriend?.name || ''} placeholder="ระบุชื่อเรียกในกลุ่ม" className="w-full p-3 rounded-xl border border-slate-200 bg-slate-50 text-sm outline-none focus:border-indigo-500 focus:ring-1" required />
@@ -1101,8 +1102,177 @@
       );
     }
 
+    function AddMealModal({ isOpen, onClose, initialData, friends, categories, openCategoryManager, onSubmit }) {
+      const [amount, setAmount] = useState('');
+      const [discount, setDiscount] = useState('');
+      const [hasVat, setHasVat] = useState(false);
+      const [hasSc, setHasSc] = useState(false);
+      const [rounding, setRounding] = useState('actual');
+      const [payerId, setPayerId] = useState('');
+      const [participants, setParticipants] = useState({});
+
+      useEffect(() => {
+        if (isOpen) {
+          const initialParts = {};
+          if (initialData && initialData.participants) {
+            friends.forEach(f => initialParts[f.id] = false);
+            initialData.participants.forEach(p => initialParts[p.friendId] = true);
+            setAmount(initialData.baseAmount || '');
+            setDiscount(initialData.discount || '');
+            setHasVat(initialData.hasVat || false);
+            setHasSc(initialData.hasServiceCharge || false);
+            setRounding(initialData.roundingMode || 'actual');
+            setPayerId(initialData.payerId || '');
+          } else {
+            friends.forEach(f => initialParts[f.id] = true);
+            setAmount(''); setDiscount(''); setHasVat(false); setHasSc(false); setRounding('actual'); setPayerId('');
+          }
+          setParticipants(initialParts);
+        }
+      }, [isOpen, friends, initialData]);
+
+      if (!isOpen) return null;
+
+      const baseAmount = parseFloat(amount) || 0;
+      const discountAmt = parseFloat(discount) || 0;
+      let calcFinal = baseAmount - discountAmt;
+      if (hasSc) calcFinal += (calcFinal * 0.10);
+      if (hasVat) calcFinal += (calcFinal * 0.07);
+
+      const activeCount = Object.values(participants).filter(Boolean).length;
+      let splitAmountRaw = activeCount > 0 ? (calcFinal / activeCount) : 0;
+      
+      let splitAmount = splitAmountRaw;
+      if (rounding === 'ceil') splitAmount = Math.ceil(splitAmountRaw);
+      else if (rounding === 'round') splitAmount = Math.round(splitAmountRaw);
+      else if (rounding === 'floor') splitAmount = Math.floor(splitAmountRaw);
+
+      const adjustedFinal = splitAmount * activeCount;
+
+      const toggleParticipant = (id) => setParticipants(prev => ({ ...prev, [id]: !prev[id] }));
+      const selectAll = () => { const next = {}; friends.forEach(f => next[f.id] = true); setParticipants(next); };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={initialData?.id ? "แก้ไขมื้ออาหาร" : "บันทึกมื้ออาหารใหม่"} fullWidth>
+          <form key={initialData?.id || 'new'} onSubmit={onSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
+            <input type="hidden" name="rounding" value={rounding} />
+            <div className="space-y-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">ชื่อร้าน / มื้ออาหาร <span className="text-slate-400 font-normal">(ไม่ระบุก็ได้)</span></label>
+                <input name="title" defaultValue={initialData?.title || ''} placeholder="เช่น ข้าวมันไก่, ชาบู หรือระบุยอดอย่างเดียวได้เลย" className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 focus:ring-1 text-sm bg-slate-50" required />
+              </div>
+              <div className="flex gap-3">
+                <div className="w-1/2">
+                  <label className="text-xs font-bold text-slate-700 mb-1.5 block">วันที่</label>
+                  <input type="date" name="date" defaultValue={initialData?.date || new Date().toISOString().split('T')[0]} className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm text-slate-600 bg-slate-50" required />
+                </div>
+                <div className="w-1/2">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="text-xs font-bold text-slate-700">หมวดหมู่</label>
+                    <button type="button" onClick={openCategoryManager} className="text-[10px] text-indigo-600 font-bold flex items-center gap-0.5 hover:underline"><Icon name="sell" className="text-[12px]"/> จัดการหมวดหมู่</button>
+                  </div>
+                  <select name="category" defaultValue={initialData?.categoryId || categories[0]?.id} className="w-full p-3 rounded-xl border border-slate-200 outline-none bg-slate-50 focus:border-indigo-500 text-sm">
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-4">
+                <div className="flex justify-between items-end gap-3">
+                  <div className="w-1/2">
+                    <label className="text-xs font-bold text-rose-600 mb-1.5 block">ยอดเงินรวม (บาท) *</label>
+                    <input name="amount" type="number" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" className="w-full p-3 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" required />
+                  </div>
+                  <div className="w-1/2 flex flex-col justify-end">
+                    <div className="flex items-center gap-3 mb-2 text-[11px] sm:text-xs font-semibold text-slate-600">
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" name="hasServiceCharge" checked={hasSc} onChange={e=>setHasSc(e.target.checked)} className="w-3.5 h-3.5 text-indigo-600 rounded" /> + Service 10%</label>
+                      <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" name="hasVat" checked={hasVat} onChange={e=>setHasVat(e.target.checked)} className="w-3.5 h-3.5 text-indigo-600 rounded" /> + VAT 7%</label>
+                    </div>
+                    <input name="discount" type="number" step="0.01" value={discount} onChange={e=>setDiscount(e.target.value)} placeholder="ส่วนลด (ถ้ามี)" className="w-full p-2.5 rounded-lg border border-slate-300 outline-none focus:border-indigo-500 text-sm font-mono" />
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-100 gap-2">
+                  <div className="flex items-center gap-1.5 text-indigo-700 text-xs font-bold"><Icon name="balance" className="text-[16px]"/> ระบบปัดเศษเงินที่หาร:</div>
+                  <div className="flex gap-1 text-[11px] font-semibold">
+                    <button type="button" onClick={()=>setRounding('actual')} className={`px-3 py-1.5 rounded-md transition ${rounding === 'actual' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>ตามจริง</button>
+                    <button type="button" onClick={()=>setRounding('ceil')} className={`px-3 py-1.5 rounded-md transition ${rounding === 'ceil' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>ปัดขึ้น</button>
+                    <button type="button" onClick={()=>setRounding('round')} className={`px-3 py-1.5 rounded-md transition ${rounding === 'round' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>ปัดปกติ</button>
+                    <button type="button" onClick={()=>setRounding('floor')} className={`px-3 py-1.5 rounded-md transition ${rounding === 'floor' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>ปัดลง</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex justify-between items-center mb-3">
+                <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Icon name="account_balance_wallet" className="text-amber-600 text-[18px]"/> ใครเป็นคนสำรองจ่ายเงิน?</label>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {friends.map(f => (
+                  <label key={f.id} className="cursor-pointer">
+                    <input type="radio" name="payerId" value={f.id} checked={payerId === f.id} onChange={(e) => setPayerId(e.target.value)} className="peer sr-only" required />
+                    <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-indigo-50 peer-checked:border-indigo-600 peer-checked:ring-1 peer-checked:ring-indigo-600 transition">
+                      <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                      <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
+                    </div>
+                  </label>
+                ))}
+                {friends.length === 0 && <p className="text-xs text-rose-500 col-span-full">กรุณาเพิ่มเพื่อนในแท็บ 'เพื่อน' ก่อน</p>}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex justify-between items-center mb-3">
+                <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Icon name="restaurant" className="text-rose-500 text-[18px]"/> เลือกคนกินที่ต้องหารมื้อนี้:</label>
+                <button type="button" onClick={selectAll} className="text-[11px] text-indigo-600 font-bold hover:underline">เลือกทุกคน</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {friends.map(f => {
+                  const isChecked = participants[f.id];
+                  const isPayer = payerId === f.id;
+                  const paidAmount = isPayer ? adjustedFinal : 0;
+                  const owedAmount = isChecked ? splitAmount : 0;
+                  const net = paidAmount - owedAmount;
+                  
+                  return (
+                    <div key={f.id} onClick={() => toggleParticipant(f.id)} className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition ${isChecked ? 'bg-indigo-50/40 border-indigo-300' : 'bg-white border-slate-200 opacity-60 hover:opacity-100'}`}>
+                      <input type="checkbox" name="participants" value={f.id} checked={isChecked} onChange={() => {}} className="hidden" />
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
+                            {isChecked && <Icon name="check" className="text-white text-[12px]"/>}
+                          </div>
+                          <span className="text-sm font-bold text-slate-800 truncate max-w-[80px]">{f.name}</span>
+                        </div>
+                        <span className={`text-[11px] font-mono font-bold ${isChecked ? 'text-indigo-700' : 'text-slate-400'}`}>ค่ากิน {owedAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 text-[10px] text-slate-500">
+                        <span>{isPayer ? <span className="text-rose-600 font-semibold">จ่ายออก {adjustedFinal.toLocaleString()} ฿</span> : 'ไม่ได้จ่ายออก'}</span>
+                        <span className={`font-bold px-2 py-0.5 rounded ${net > 0 ? 'bg-emerald-100 text-emerald-700' : net < 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>
+                          {net > 0 ? `ได้คืน +${net.toLocaleString()}` : net < 0 ? `จ่ายเพิ่ม ${Math.abs(net).toLocaleString()}` : 'พอดี 0 ฿'}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
+              <button disabled={friends.length === 0 || !amount || !payerId || activeCount === 0} type="submit" className="w-2/3 bg-indigo-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <Icon name="check_circle" className="text-[18px]"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกบิลอาหาร'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
     function CategoryManagerModal({ isOpen, onClose, categories }) {
       const [newCat, setNewCat] = useState('');
+      const [editingId, setEditingId] = useState(null);
+      const [editLabel, setEditLabel] = useState('');
+
       const handleAdd = async (e) => {
         e.preventDefault();
         if (newCat.trim()) {
@@ -1110,6 +1280,15 @@
           setNewCat('');
         }
       };
+
+      const handleEdit = async (e) => {
+        e.preventDefault();
+        if (editLabel.trim()) {
+          await db.collection('categories').doc(editingId).update({ label: editLabel.trim() });
+          setEditingId(null);
+        }
+      };
+
       if (!isOpen) return null;
       return (
         <Modal isOpen={isOpen} onClose={onClose} title="จัดการหมวดหมู่อาหาร">
@@ -1122,9 +1301,22 @@
               <h3 className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">รายการหมวดหมู่ทั้งหมด</h3>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                 {categories.map(c => (
-                  <div key={c.id} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl bg-white shadow-sm">
-                    <span className="text-sm font-bold text-slate-800">{c.label}</span>
-                    <button onClick={() => {if(confirm('ลบหมวดหมู่นี้?')) db.collection('categories').doc(c.id).delete()}} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"><Icon name="delete" className="text-[18px]"/></button>
+                  <div key={c.id} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl bg-white shadow-sm min-h-[52px]">
+                    {editingId === c.id ? (
+                      <form onSubmit={handleEdit} className="flex gap-2 w-full">
+                        <input value={editLabel} onChange={e=>setEditLabel(e.target.value)} className="flex-1 p-1.5 border border-slate-300 rounded text-sm outline-none focus:border-indigo-500" autoFocus />
+                        <button type="submit" className="text-xs bg-indigo-600 text-white px-3 rounded font-bold">บันทึก</button>
+                        <button type="button" onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-600 px-3 rounded font-bold">ยกเลิก</button>
+                      </form>
+                    ) : (
+                      <>
+                        <span className="text-sm font-bold text-slate-800">{c.label}</span>
+                        <div className="flex gap-1 text-slate-400">
+                          <button onClick={() => { setEditingId(c.id); setEditLabel(c.label); }} className="p-1 hover:text-indigo-600 transition"><Icon name="edit" className="text-[18px]"/></button>
+                          <button onClick={() => {if(confirm('ลบหมวดหมู่นี้?')) db.collection('categories').doc(c.id).delete()}} className="p-1 hover:text-rose-600 transition"><Icon name="delete" className="text-[18px]"/></button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1219,7 +1411,7 @@
 
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => { navigator.clipboard.writeText(transfer.amount.toString()); alert('คัดลอกยอดเงินแล้ว'); }} className="py-3 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 flex items-center justify-center gap-1.5 hover:bg-emerald-100 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกยอด</button>
-                  <button onClick={() => { navigator.clipboard.writeText(transfer.promptPay || transfer.bankAccount); alert('คัดลอกเลขบัญชีแล้ว'); }} className="py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 hover:bg-slate-200 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกเลข</button>
+                  <button onClick={() => { navigator.clipboard.writeText(transfer.promptPay || transfer.bankAccount); alert('คัดลอกเลขบัญชีแล้ว'); }} className="py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 hover:bg-slate-200 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกเลขบัญชี</button>
                 </div>
 
                 <div className="flex justify-between items-center pt-2 px-1">
