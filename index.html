@@ -333,7 +333,20 @@
           setIsLoading(false);
         });
         const unsubCategories = db.collection('categories').orderBy('createdAt', 'asc').onSnapshot(snap => {
-          if (snap.docs.length > 0) setCategories(snap.docs.map(d => ({id: d.id, ...d.data()})));
+          if (snap.docs.length === 0) {
+            // ถ้าในฐานข้อมูลว่างเปล่า ให้สร้างหมวดหมู่พื้นฐานเข้าไปเป็นข้อมูลจริงเลย
+            DEFAULT_CATEGORIES.forEach((cat, idx) => {
+              db.collection('categories').doc(cat.id).set({
+                label: cat.label,
+                icon: cat.icon,
+                color: cat.color,
+                createdAt: firebase.firestore.Timestamp.fromMillis(Date.now() + idx)
+              });
+            });
+            setCategories(DEFAULT_CATEGORIES);
+          } else {
+            setCategories(snap.docs.map(d => ({id: d.id, ...d.data()})));
+          }
         });
         const unsubSettled = db.collection('settled_debts').onSnapshot(snap => setSettledDebts(snap.docs.map(d => ({id: d.id, ...d.data()}))));
         return () => { unsubFriends(); unsubMeals(); unsubCategories(); unsubSettled(); };
@@ -610,7 +623,7 @@
             </form>
           </Modal>
 
-          <CategoryManagerModal isOpen={modals.category} onClose={() => closeModal('category')} categories={categories} />
+          <CategoryManagerModal isOpen={modals.category} onClose={() => closeModal('category')} categories={categories} showConfirm={showConfirm} />
           <QRCodeModal isOpen={modals.qr} onClose={() => closeModal('qr')} transfer={selectedTransfer} onSettle={handleSettleDebt} />
           
           <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} settlementData={settleData} meals={meals} friends={friends} />
@@ -1330,8 +1343,140 @@
         </Modal>
       );
     }
+    function AddDebtModal({ isOpen, onClose, initialData, friends, onSubmit }) {
+      const [title, setTitle] = useState('');
+      const [amount, setAmount] = useState('');
+      const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+      const [creditorId, setCreditorId] = useState('');
+      const [debtors, setDebtors] = useState({});
+      const [includeInAutoSettle, setIncludeInAutoSettle] = useState(true);
 
-    function CategoryManagerModal({ isOpen, onClose, categories }) {
+      useEffect(() => {
+        if (isOpen) {
+          if (initialData) {
+            setTitle(initialData.title || '');
+            setAmount(initialData.baseAmount || '');
+            setDate(initialData.date || new Date().toISOString().split('T')[0]);
+            setCreditorId(initialData.payerId || '');
+            setIncludeInAutoSettle(initialData.includeInAutoSettle !== false);
+            const initialParts = {};
+            friends.forEach(f => initialParts[f.id] = false);
+            if (initialData.participants) initialData.participants.forEach(p => initialParts[p.friendId] = true);
+            setDebtors(initialParts);
+          } else {
+            setTitle(''); setAmount(''); setDate(new Date().toISOString().split('T')[0]);
+            setCreditorId(''); setIncludeInAutoSettle(true);
+            const initialParts = {};
+            friends.forEach(f => initialParts[f.id] = false);
+            setDebtors(initialParts);
+          }
+        }
+      }, [isOpen, initialData, friends]);
+
+      if (!isOpen) return null;
+
+      const toggleDebtor = (id) => setDebtors(prev => ({ ...prev, [id]: !prev[id] }));
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const activeDebtors = Object.keys(debtors).filter(id => debtors[id]);
+        if (!amount || !creditorId || activeDebtors.length === 0) {
+          alert('กรุณาระบุยอดเงิน เจ้าหนี้ และลูกหนี้ให้ครบถ้วน');
+          return;
+        }
+        
+        const finalAmount = parseFloat(amount);
+        const splitAmount = finalAmount / activeDebtors.length;
+        const participants = activeDebtors.map(id => ({ friendId: id, amount: splitAmount }));
+
+        const data = {
+          title: title || 'หนี้ค้าง/ยืมเงิน',
+          date, categoryId: 'custom_debt',
+          baseAmount: finalAmount, finalAmount: finalAmount,
+          discount: 0, hasVat: false, hasServiceCharge: false,
+          payerId: creditorId, participants,
+          splitMode: 'equal', roundingMode: 'actual',
+          isCustomDebt: true, includeInAutoSettle
+        };
+        onSubmit(data, initialData?.id);
+      };
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={initialData?.id ? "แก้ไขหนี้ค้าง" : "บันทึกหนี้ค้าง / ยืมเงินต่างหาก"} fullWidth>
+          <form onSubmit={handleSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">รายการ / รายละเอียดหนี้</label>
+                <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="เช่น ค่าน้ำมัน, ตั๋วหนัง, ยืมเงินสด..." className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" />
+              </div>
+              <div className="flex gap-3">
+                <div className="w-1/2">
+                  <label className="text-xs font-bold text-slate-700 mb-1.5 block">วันที่เกิดหนี้</label>
+                  <input type="date" value={date} onChange={e=>setDate(e.target.value)} className="w-full p-3 rounded-xl border border-slate-200 outline-none focus:border-indigo-500 text-sm bg-slate-50" required />
+                </div>
+                <div className="w-1/2">
+                  <label className="text-xs font-bold text-rose-600 mb-1.5 block">ยอดสุทธิ (บาท) *</label>
+                  <input type="text" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00" className="w-full p-3 rounded-xl border border-slate-300 outline-none focus:border-indigo-500 font-mono font-bold text-lg text-slate-800" required />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="account_balance_wallet" className="text-emerald-600 text-[18px]"/> ใครเป็นเจ้าหนี้? (คนให้ยืม)</label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {friends.map(f => (
+                  <label key={f.id} className="cursor-pointer">
+                    <input type="radio" name="creditorId" value={f.id} checked={creditorId === f.id} onChange={(e) => setCreditorId(e.target.value)} className="peer sr-only" required />
+                    <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:ring-1 peer-checked:ring-emerald-500 transition">
+                      <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                      <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5 mb-3"><Icon name="money_off" className="text-rose-500 text-[18px]"/> ใครคือลูกหนี้? (คนยืม)</label>
+              <div className="grid grid-cols-2 gap-3">
+                {friends.map(f => {
+                  const isChecked = debtors[f.id];
+                  return (
+                    <div key={f.id} onClick={() => toggleDebtor(f.id)} className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition ${isChecked ? 'bg-rose-50/40 border-rose-300' : 'bg-white border-slate-200 opacity-60 hover:opacity-100'}`}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-rose-500 border-rose-500' : 'border-slate-300 bg-white'}`}>
+                          {isChecked && <Icon name="check" className="text-white text-[12px]"/>}
+                        </div>
+                        <span className="text-sm font-bold text-slate-800 truncate max-w-[80px]">{f.name}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Checkbox เลือกการรวมยอด/แยกยอด */}
+              <div className="mt-5 p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-start gap-2.5 cursor-pointer hover:bg-indigo-100/50 transition" onClick={() => setIncludeInAutoSettle(!includeInAutoSettle)}>
+                <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center border transition-colors shrink-0 ${includeInAutoSettle ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>
+                   {includeInAutoSettle && <Icon name="check" className="text-white text-[12px]"/>}
+                </div>
+                <div>
+                    <div className="text-sm font-bold text-indigo-800">รวมเข้ายอด "เคลียร์หนี้" อัตโนมัติ</div>
+                    <div className="text-[11px] text-indigo-600/80 leading-snug mt-1">หากนำเครื่องหมายถูกออก ยอดนี้จะแยกอยู่แค่ในประวัติ และไม่ถูกนำไปหักลบกับเพื่อนในระบบ</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
+              <button disabled={!amount || !creditorId} type="submit" className="w-2/3 bg-rose-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-rose-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <Icon name="check_circle" className="text-[18px]"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ค้าง'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    function CategoryManagerModal({ isOpen, onClose, categories, showConfirm }) {
       const [newCat, setNewCat] = useState('');
       const [editingId, setEditingId] = useState(null);
       const [editLabel, setEditLabel] = useState('');
@@ -1339,9 +1484,10 @@
       const handleAdd = async (e) => {
         e.preventDefault();
         if (newCat.trim()) {
-          await db.collection('categories').add({ 
-            label: newCat.trim(), 
-            createdAt: firebase.firestore.FieldValue.serverTimestamp() 
+          await db.collection('categories').add({
+            label: newCat.trim(),
+            color: 'bg-slate-50 text-slate-700 border-slate-200', // สีพื้นฐานสำหรับอันที่สร้างใหม่
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           setNewCat('');
         }
@@ -1350,8 +1496,7 @@
       const handleEdit = async (e) => {
         e.preventDefault();
         if (editLabel.trim() && editingId) {
-          // ใช้ { merge: true } เพื่อให้บันทึกและแก้ไขได้ แม้เป็นหมวดหมู่ Default
-          await db.collection('categories').doc(editingId).set({ 
+          await db.collection('categories').doc(editingId).set({
             label: editLabel.trim(),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           }, { merge: true });
@@ -1359,10 +1504,17 @@
         }
       };
 
-      const handleDelete = async (id) => {
-        if(confirm('ยืนยันการลบหมวดหมู่นี้?')) {
-          await db.collection('categories').doc(id).delete();
-          setEditingId(null);
+      const handleDelete = (id) => {
+        if (showConfirm) {
+          showConfirm('ยืนยันการลบ', 'ลบหมวดหมู่นี้ใช่หรือไม่?', async () => {
+            await db.collection('categories').doc(id).delete();
+            setEditingId(null);
+          }, 'ลบทิ้ง', 'bg-rose-600 hover:bg-rose-700');
+        } else {
+          if(confirm('ลบหมวดหมู่นี้?')) {
+            db.collection('categories').doc(id).delete();
+            setEditingId(null);
+          }
         }
       };
 
@@ -1378,14 +1530,14 @@
             
             <div className="mt-6">
               <h3 className="text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">รายการหมวดหมู่ทั้งหมด</h3>
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1 hide-scrollbar">
                 {categories.map(c => (
                   <div key={c.id} className="flex justify-between items-center p-3 border border-slate-200 rounded-xl bg-white shadow-sm min-h-[52px]">
                     {editingId === c.id ? (
                       <form onSubmit={handleEdit} className="flex gap-2 w-full">
                         <input value={editLabel} onChange={e=>setEditLabel(e.target.value)} className="flex-1 p-1.5 border border-slate-300 rounded text-sm outline-none focus:border-indigo-500" autoFocus />
-                        <button type="submit" className="text-xs bg-indigo-600 text-white px-3 rounded font-bold hover:bg-indigo-700">บันทึก</button>
-                        <button type="button" onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-600 px-3 rounded font-bold hover:bg-slate-200">ยกเลิก</button>
+                        <button type="submit" className="text-xs bg-indigo-600 text-white px-3 rounded font-bold hover:bg-indigo-700 transition">บันทึก</button>
+                        <button type="button" onClick={()=>setEditingId(null)} className="text-xs bg-slate-100 text-slate-600 px-3 rounded font-bold hover:bg-slate-200 transition">ยกเลิก</button>
                       </form>
                     ) : (
                       <>
@@ -1401,8 +1553,8 @@
               </div>
             </div>
 
-            <div className="pt-4 flex justify-end">
-              <button onClick={onClose} className="px-6 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200">เสร็จสิ้น</button>
+            <div className="pt-4 flex justify-end border-t border-slate-100">
+              <button onClick={onClose} className="px-6 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition">เสร็จสิ้น</button>
             </div>
           </div>
         </Modal>
