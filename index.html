@@ -5,27 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MealSplit TH - ระบบหารค่าข้าว & หักลบหนี้อัตโนมัติ</title>
   
-  <!-- ไอคอนโลโก้แอป -->
   <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/3170/3170733.png">
   
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   
-  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
-
-  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-  <!-- Google Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 
   <script>
@@ -58,9 +51,6 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo, useRef } = React;
 
-    // ==========================================
-    // 1. FIREBASE CONFIGURATION
-    // ==========================================
     const firebaseConfig = {
       projectId: "mealsplit-th",
       appId: "1:575865319667:web:df3d76a11f4f944656c786",
@@ -82,9 +72,6 @@
     const THAI_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
     const THAI_DAYS = ['อา.','จ.','อ.','พ.','พฤ.','ศ.','ส.'];
 
-    // ==========================================
-    // 2. HELPER LOGIC
-    // ==========================================
     function generatePromptPayPayload(target, amount) {
       target = target ? target.replace(/[^0-9]/g, '') : '';
       if (!target) return "";
@@ -135,7 +122,6 @@
       let totalExpense = 0; 
       
       meals.forEach(m => {
-        // ถ้ารายการนั้นเป็นหนี้ที่เลือก "ไม่รวมยอด" ให้ข้ามไปเลย
         if (m.isCustomDebt && m.includeInAutoSettle === false) return;
 
         totalExpense += m.finalAmount;
@@ -209,7 +195,7 @@
             toOwesFromTotal = historyToOwesFrom.reduce((s, h) => s + h.amount, 0) - settledToFromTotal;
 
             meals.forEach(m => {
-              if (m.isCustomDebt && m.includeInAutoSettle === false) return; // Skip
+              if (m.isCustomDebt && m.includeInAutoSettle === false) return;
               if ((m.payerId === toId && m.participants.some(p => p.friendId === fromId)) ||
                   (m.payerId === fromId && m.participants.some(p => p.friendId === toId))) {
                  activeMealsSet.add(m.id);
@@ -248,9 +234,6 @@
       return { totalExpense, activeTotalExpense, activeMealsList, transfers, balances };
     }
 
-    // ==========================================
-    // 3. REUSABLE UI COMPONENTS
-    // ==========================================
     const Icon = ({ name, className }) => <span className={`material-icons-round ${className}`}>{name}</span>;
 
     const Modal = ({ isOpen, onClose, title, children, fullWidth = false, noPadding = false }) => {
@@ -286,7 +269,7 @@
       if (!src) return <div className="text-xs text-slate-500 bg-slate-50 p-6 rounded-xl text-center border border-slate-200 border-dashed w-48 h-48 flex items-center justify-center">ไม่มีพร้อมเพย์</div>;
       return <img src={src} alt="QR" className="w-48 h-48 mx-auto rounded-xl shadow-sm border border-slate-200 p-2" />;
     }
-    
+
     function ConfirmModal({ isOpen, onClose, title, message, onConfirm, confirmText = "ยืนยัน", confirmColor = "bg-rose-600 hover:bg-rose-700" }) {
       if (!isOpen) return null;
       return (
@@ -308,10 +291,7 @@
         </Modal>
       );
     }
-    
-    // ==========================================
-    // 5. APP CONTAINER
-    // ==========================================
+
     function App() {
       const [activeTab, setActiveTab] = useState('settle');
       const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -321,7 +301,6 @@
       const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
       const [settledDebts, setSettledDebts] = useState([]);
       const [isLoading, setIsLoading] = useState(true);
-      const summaryRef = useRef(null);
 
       const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, viewMeal: false });
       const [selectedTransfer, setSelectedTransfer] = useState(null);
@@ -329,9 +308,8 @@
       const [editingDebt, setEditingDebt] = useState(null);
       const [editingFriend, setEditingFriend] = useState(null);
       const [viewingMeal, setViewingMeal] = useState(null);
-      
+
       const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null, confirmText: 'ยืนยัน', confirmColor: 'bg-rose-600 hover:bg-rose-700' });
-      
       const showConfirm = (title, message, onConfirm, confirmText = 'ยืนยัน', confirmColor = 'bg-rose-600 hover:bg-rose-700') => {
         setConfirmDialog({ isOpen: true, title, message, onConfirm, confirmText, confirmColor });
       };
@@ -347,9 +325,7 @@
           if (snap.docs.length === 0) {
             DEFAULT_CATEGORIES.forEach((cat, idx) => {
               db.collection('categories').doc(cat.id).set({
-                label: cat.label,
-                icon: cat.icon,
-                color: cat.color,
+                label: cat.label, icon: cat.icon, color: cat.color,
                 createdAt: firebase.firestore.Timestamp.fromMillis(Date.now() + idx)
               });
             });
@@ -514,7 +490,7 @@
               </div>
             </div>
 
-            {/* TABS */}
+            {/* TABS (ซ่อนบนมือถือเพราะมีเมนู 3 ขีด, แสดงบนจอไอแพด/คอม) */}
             <div className="hidden sm:flex bg-white shadow-sm border-b border-slate-200 text-sm font-bold text-slate-500">
               <button onClick={() => setActiveTab('settle')} className={`flex-1 py-4 flex items-center justify-center gap-2 transition ${activeTab === 'settle' ? 'text-indigo-700 border-b-2 border-indigo-600 bg-indigo-50/50' : 'hover:bg-slate-50'}`}>
                 <Icon name="balance" className="text-lg"/> เคลียร์ยอด
@@ -694,9 +670,8 @@
     }
 
     // ==========================================
-    // 6. EXTRA COMPONENTS (Implementation of Sub-Views)
+    // 6. EXTRA COMPONENTS
     // ==========================================
-    
     function SettlementView({ settlementData, meals, friends, onSettleDebt, onOpenQR, exportToImage, shareToLine }) {
       const [expandedId, setExpandedId] = useState(null);
       return (
@@ -808,7 +783,6 @@
                       </div>
                     </div>
                     
-                    {/* สูตรคำนวณ Accordion */}
                     <div className="bg-slate-50 border-t border-slate-100 px-5 py-3 text-xs cursor-pointer hover:bg-slate-100 transition" onClick={() => setExpandedId(expandedId === idx ? null : idx)}>
                       <div className="flex justify-between items-center">
                         <span className="text-slate-500 font-medium">คำนวณจากประวัติ {t.historyCount} รายการ</span>
@@ -1332,7 +1306,6 @@
                 })}
               </div>
 
-              {/* Checkbox เลือกการรวมยอด/แยกยอด */}
               <div className="mt-5 p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-start gap-2.5 cursor-pointer hover:bg-indigo-100/50 transition" onClick={() => setIncludeInAutoSettle(!includeInAutoSettle)}>
                 <div className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center border transition-colors shrink-0 ${includeInAutoSettle ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-slate-300'}`}>
                    {includeInAutoSettle && <Icon name="check" className="text-white text-[12px]"/>}
@@ -1622,6 +1595,7 @@
         </Modal>
       );
     }
+
     function QRCodeModal({ isOpen, onClose, transfer, onSettle }) {
       const [isEditing, setIsEditing] = useState(false);
       const [promptPay, setPromptPay] = useState('');
@@ -1717,7 +1691,90 @@
         </Modal>
       );
     }
-    
+
+    function ImageExportModal({ isOpen, onClose, settlementData, meals, friends }) {
+      const summaryRef = useRef(null);
+      const [style, setStyle] = useState('notebook');
+      const handleDownload = async () => {
+        if (summaryRef.current) {
+          const canvas = await html2canvas(summaryRef.current, { scale: 2, backgroundColor: style === 'notebook' ? '#f8fafc' : '#ffffff' });
+          const link = document.createElement('a'); link.download = `สรุปยอดหารค่าข้าว_${new Date().toISOString().split('T')[0]}.png`;
+          link.href = canvas.toDataURL(); link.click();
+        }
+      };
+      if (!isOpen) return null;
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="บันทึกสรุปยอดเป็นรูปภาพ" fullWidth>
+          <div className="p-4 sm:p-6 bg-slate-50 flex flex-col items-center">
+            <div className="flex items-center gap-3 mb-6 w-full max-w-sm">
+              <span className="text-xs font-bold text-slate-600">รูปแบบภาพ:</span>
+              <div className="flex bg-slate-200 p-1 rounded-lg flex-1">
+                <button onClick={()=>setStyle('notebook')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'notebook' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-500'}`}>📝 สไตล์สมุดโน้ต</button>
+                <button onClick={()=>setStyle('modern')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${style === 'modern' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>✨ สไตล์โมเดิร์น</button>
+              </div>
+            </div>
+
+            <div className="max-h-[55vh] overflow-y-auto w-full flex justify-center pb-4 hide-scrollbar">
+              <div ref={summaryRef} className={`w-full max-w-sm p-6 sm:p-8 shadow-lg rounded-3xl ${style === 'notebook' ? 'bg-notebook border-2 border-amber-200 font-sans' : 'bg-white border border-slate-200 font-sans'}`}>
+                <div className="text-center border-b border-dashed border-slate-300 pb-5 mb-5">
+                  <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
+                  <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
+                  <p className="text-xs text-slate-500 font-mono mt-1.5">ยอดค้างจ่าย {settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ ({settlementData.activeMealsList.length} มื้อ)</p>
+                </div>
+
+                <div className="space-y-2 mb-6">
+                  <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-xs font-bold text-slate-800">📌 ยอดที่ต้องโอนจริง <span className="text-slate-500 font-normal">(หักลบแล้ว)</span>:</h3>
+                    <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">โอนสุทธิ</span>
+                  </div>
+                  {settlementData.transfers.map((t, i) => (
+                    <div key={i} className={`flex justify-between items-center p-3 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'}`}>
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
+                        <span className={`w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] shadow-inner ${style === 'notebook' ? 'bg-amber-500' : 'bg-indigo-500'}`}>{i+1}</span>
+                        <span>{t.fromName} ➔ {t.toName}</span>
+                      </div>
+                      <span className="font-mono font-extrabold text-sm text-rose-600">{t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
+                    </div>
+                  ))}
+                  {settlementData.transfers.length === 0 && <div className="text-center text-xs font-bold text-emerald-600 py-3 bg-emerald-50 rounded-xl border border-emerald-200">✅ ไม่มีหนี้ค้างชำระ</div>}
+                </div>
+
+                <div className="space-y-3 mb-6 border-t border-dashed border-slate-300 pt-5">
+                  <h3 className="text-xs font-bold text-slate-800 mb-2">📌 รายละเอียดการออกเงินรายมื้อ (ที่ยังค้างจ่าย):</h3>
+                  {settlementData.activeMealsList.map((m, i) => {
+                    const payerName = friends.find(f => f.id === m.payerId)?.name || 'Unknown';
+                    const perPerson = m.finalAmount / m.participants.length;
+                    return (
+                      <div key={i} className={`p-3.5 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'} text-[11px]`}>
+                        <div className="flex justify-between font-bold text-slate-800 mb-1.5">
+                          <span className="truncate pr-2">• {m.title}</span>
+                          <span className="font-mono text-indigo-700 shrink-0">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
+                        </div>
+                        <div className="flex justify-between text-slate-500">
+                          <span>จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
+                          <span>(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {settlementData.activeMealsList.length === 0 && <div className="text-xs text-slate-400">ไม่มีรายการ</div>}
+                </div>
+
+                <div className="mt-8 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
+              </div>
+            </div>
+
+            <div className="w-full flex gap-3 mt-4">
+              <button onClick={onClose} className="px-6 py-3.5 rounded-xl border border-slate-300 font-bold text-sm text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">ปิด</button>
+              <button onClick={handleDownload} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition">
+                <Icon name="file_download"/> ดาวน์โหลดรูปภาพ
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )
+    }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
