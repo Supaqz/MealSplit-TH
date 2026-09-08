@@ -306,7 +306,7 @@
       const [settledDebts, setSettledDebts] = useState([]);
       const [isLoading, setIsLoading] = useState(true);
 
-      const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, viewMeal: false });
+      const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, lineShare: false, viewMeal: false, payment: false });
       const [selectedTransfer, setSelectedTransfer] = useState(null);
       const [editingMeal, setEditingMeal] = useState(null);
       const [editingDebt, setEditingDebt] = useState(null);
@@ -343,7 +343,7 @@
       }, []);
 
       const openModal = (name, data = null) => {
-        if (name === 'qr') setSelectedTransfer(data);
+        if (name === 'qr' || name === 'payment') setSelectedTransfer(data);
         if (name === 'addMeal') setEditingMeal(data);
         if (name === 'addDebt') setEditingDebt(data);
         if (name === 'addFriend') setEditingFriend(data);
@@ -437,12 +437,15 @@
         }, 'ลบรายการนี้', 'bg-rose-600 hover:bg-rose-700');
       };
 
-      const handleSettleDebt = (transfer) => {
-        showConfirm('ยืนยันการเคลียร์ยอด', `ยืนยันการโอนเงินจำนวน ${transfer.amount} บาท ให้ ${transfer.toName} เรียบร้อยแล้วใช่หรือไม่?`, async () => {
+      const handleSettleDebt = (transfer, customAmount = null) => {
+        const finalAmount = customAmount || transfer.amount;
+        showConfirm('ยืนยันการเคลียร์ยอด', `ยืนยันการโอนเงินจำนวน ${finalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท ให้ ${transfer.toName} เรียบร้อยแล้วใช่หรือไม่?`, async () => {
           await db.collection('settled_debts').add({
-            fromId: transfer.fromId, toId: transfer.toId, amount: transfer.amount,
+            fromId: transfer.fromId, toId: transfer.toId, amount: finalAmount,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
+          closeModal('payment');
+          closeModal('qr');
         }, 'โอนเสร็จแล้ว เคลียร์เลย', 'bg-emerald-600 hover:bg-emerald-700');
       };
 
@@ -559,6 +562,7 @@
                   friends={friends} 
                   settledDebts={settledDebts} 
                   onSettleDebt={handleSettleDebt} 
+                  onOpenPayment={(data) => openModal('payment', data)}
                   onOpenQR={(data) => openModal('qr', data)} 
                   exportToImage={() => openModal('export')} 
                   shareToLine={() => openModal('lineShare')} 
@@ -656,6 +660,7 @@
           <QRCodeModal isOpen={modals.qr} onClose={() => closeModal('qr')} transfer={selectedTransfer} onSettle={handleSettleDebt} />
          <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} meals={meals} friends={friends} settledDebts={settledDebts} />
          <LineShareModal isOpen={modals.lineShare} onClose={() => closeModal('lineShare')} meals={meals} friends=   {friends} settledDebts={settledDebts} />
+          <PaymentModal isOpen={modals.payment} onClose={() => closeModal('payment')} transfer={selectedTransfer} onConfirm={handleSettleDebt} />
 
           <ViewMealModal isOpen={modals.viewMeal} onClose={() => closeModal('viewMeal')} meal={viewingMeal} friends={friends} categories={categories}
             onEdit={() => { closeModal('viewMeal'); handleEditItem(viewingMeal); }}
@@ -678,18 +683,17 @@
     // ==========================================
     // 6. EXTRA COMPONENTS
     // ==========================================
-    function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenQR, exportToImage, shareToLine }) {
+    function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenPayment, onOpenQR, exportToImage, shareToLine }) {
       const [expandedId, setExpandedId] = useState(null);
-      const [netMode, setNetMode] = useState('all'); // 'all' = รวมทั้งหมด, 'food_only' = เฉพาะค่าข้าว, 'debt_only' = เฉพาะหนี้ค้าง
+      const [netMode, setNetMode] = useState('all'); 
 
       const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode), [meals, friends, settledDebts, netMode]);
 
       return (
         <div className="space-y-6 animate-fade-in pb-10">
-          {/* ตัวเลือกโหมดการหักลบหนี้ */}
           <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pl-2">
-              <Icon name="tune" className="text-indigo-600 text-sm"/> เลือกมุมมองการเคลียร์หนี้:
+              <Icon className="text-indigo-600 text-sm" name="tune"/> เลือกมุมมองการเคลียร์หนี้:
             </div>
             <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
               <button onClick={() => setNetMode('all')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'all' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>รวมค่าข้าว + หนี้ค้าง</button>
@@ -700,7 +704,7 @@
 
           <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center border border-indigo-100"><Icon name="balance" className="text-3xl"/></div>
+              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center border border-indigo-100"><Icon className="text-3xl" name="balance"/></div>
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm text-slate-500 font-bold">
@@ -712,15 +716,15 @@
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={exportToImage} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold hover:bg-amber-100 flex items-center gap-1.5 transition"><Icon name="image" className="text-[16px]"/> บันทึกรูปภาพ</button>
-              <button onClick={shareToLine} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon name="share" className="text-[16px]"/> แชร์ LINE</button>
+              <button onClick={exportToImage} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold hover:bg-amber-100 flex items-center gap-1.5 transition"><Icon className="text-[16px]" name="image"/> บันทึกรูปภาพ</button>
+              <button onClick={shareToLine} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon className="text-[16px]" name="share"/> แชร์ LINE</button>
             </div>
           </div>
 
           {settlementData.transfers.length > 0 && (
             <div className="bg-[#FFFAEB] border border-amber-200 rounded-2xl p-5 sm:p-6 shadow-sm relative overflow-hidden">
               <div className="absolute top-0 left-0 w-1 h-full bg-amber-400"></div>
-              <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon name="star" className="text-amber-500 text-lg"/> สรุปยอดโอนจริงสุทธิ (หักลบเรียบร้อยแล้ว):</h3>
+              <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2"><Icon className="text-amber-500 text-lg" name="star"/> สรุปยอดโอนจริงสุทธิ (หักลบเรียบร้อยแล้ว):</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {settlementData.transfers.map((t, idx) => (
                   <div key={idx} className="bg-white border border-amber-200/60 shadow-sm rounded-xl p-3.5 flex justify-between items-center text-xs">
@@ -767,7 +771,7 @@
                             </div>
                           </div>
                           <div className="flex flex-col items-center text-slate-300 px-2 sm:px-4">
-                            <Icon name="arrow_forward" className="text-2xl text-indigo-300"/>
+                            <Icon className="text-2xl text-indigo-300" name="arrow_forward"/>
                             <span className="text-[9px] font-bold text-slate-400 mt-1">โอนให้</span>
                           </div>
                           <div className="flex items-center gap-3">
@@ -786,36 +790,36 @@
 
                       <div className="mt-6 flex flex-wrap gap-3 md:justify-end">
                         <button onClick={() => onOpenQR(t)} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition">
-                          <Icon name="qr_code_2" className="text-[18px]"/> QR พร้อมเพย์
+                          <Icon className="text-[18px]" name="qr_code_2"/> QR พร้อมเพย์
                         </button>
                         <button onClick={() => { navigator.clipboard.writeText(t.promptPay || t.bankAccount || ''); alert('คัดลอกเลขบัญชีแล้ว'); }} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition">
-                          <Icon name="content_copy" className="text-[18px]"/> คัดลอกเลข
+                          <Icon className="text-[18px]" name="content_copy"/> คัดลอกเลข
                         </button>
-                        <button onClick={() => onSettleDebt(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
-                          <Icon name="check_circle" className="text-[18px]"/> เคลียร์แล้ว
+                        <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
+                          <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
                         </button>
                       </div>
                       
                       <div className="mt-4 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-3 text-xs">
                         <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                          <Icon name="account_balance_wallet" className="text-[16px]"/> ช่องทางรับเงินของ {t.toName}:
+                          <Icon className="text-[16px]" name="account_balance_wallet"/> ช่องทางรับเงินของ {t.toName}:
                         </div>
                         {t.promptPay && <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg font-mono font-bold text-slate-700 shadow-sm">พร้อมเพย์: {t.promptPay}</div>}
                         {t.bankAccount && <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg font-mono font-bold text-slate-700 shadow-sm">{t.bankName} {t.bankAccount}</div>}
                         {!t.promptPay && !t.bankAccount && <div className="text-rose-500 bg-rose-50 px-2 py-1 rounded border border-rose-100">ยังไม่ระบุบัญชีรับเงิน</div>}
-                        <button onClick={() => onOpenQR(t)} className="ml-auto text-indigo-600 font-bold flex items-center gap-1 hover:underline"><Icon name="qr_code_2" className="text-[16px]"/> เปิด QR สแกนจ่าย</button>
+                        <button onClick={() => onOpenQR(t)} className="ml-auto text-indigo-600 font-bold flex items-center gap-1 hover:underline"><Icon className="text-[16px]" name="qr_code_2"/> เปิด QR สแกนจ่าย</button>
                       </div>
                     </div>
                     
                     <div className="bg-slate-50 border-t border-slate-100 px-5 py-3 text-xs cursor-pointer hover:bg-slate-100 transition" onClick={() => setExpandedId(expandedId === idx ? null : idx)}>
                       <div className="flex justify-between items-center">
                         <span className="text-slate-500 font-medium">คำนวณจากประวัติ {t.historyCount} รายการ</span>
-                        <span className="text-indigo-600 font-semibold flex items-center gap-1"><Icon name="calculate" className="text-[14px]"/> {expandedId === idx ? 'ซ่อนสูตรคำนวณ' : 'ดูสูตรคำนวณ'} <Icon name={expandedId === idx ? "expand_less" : "expand_more"} className="text-[16px]"/></span>
+                        <span className="text-indigo-600 font-semibold flex items-center gap-1"><Icon className="text-[14px]" name="calculate"/> {expandedId === idx ? 'ซ่อนสูตรคำนวณ' : 'ดูสูตรคำนวณ'} <Icon className="text-[16px]" name={expandedId === idx ? "expand_less" : "expand_more"}/></span>
                       </div>
                       {expandedId === idx && (
                         <div className="mt-4 pt-4 border-t border-slate-200 space-y-3 cursor-default" onClick={e=>e.stopPropagation()}>
                           <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 mb-2">
-                            <Icon name="history" className="text-indigo-500 text-[14px]"/> ขั้นตอนการคำนวณระหว่าง {t.fromName} และ {t.toName}:
+                            <Icon className="text-indigo-500 text-[14px]" name="history"/> ขั้นตอนการคำนวณระหว่าง {t.fromName} และ {t.toName}:
                           </div>
                           
                           <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
@@ -850,7 +854,7 @@
 
                           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 shadow-sm text-xs space-y-2">
                             <div className="flex gap-1.5 items-center font-bold text-emerald-800">
-                              <Icon name="check_circle" className="text-[14px]"/> สูตรหักลบส่วนต่าง: |-{t.fromOwesToTotal.toLocaleString('th-TH', {minimumFractionDigits:2})} - -{t.toOwesFromTotal.toLocaleString('th-TH', {minimumFractionDigits:2})}| = {t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} บาท
+                              <Icon className="text-[14px]" name="check_circle"/> สูตรหักลบส่วนต่าง: |-{t.fromOwesToTotal.toLocaleString('th-TH', {minimumFractionDigits:2})} - -{t.toOwesFromTotal.toLocaleString('th-TH', {minimumFractionDigits:2})}| = {t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} บาท
                             </div>
                             <div className="font-bold text-emerald-700 pl-5">
                               👉 สรุปคือ {t.fromName} โอนให้ {t.toName} เพียง {t.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ จบหนี้ระหว่างคู่นี้ทันที
@@ -867,11 +871,12 @@
 
           <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm mt-6">
             <div className="flex justify-between items-center mb-5 border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2"><Icon name="group" className="text-indigo-600"/> สรุปยอดสถานะของสมาชิกแต่ละคน</h3>
+              <h3 className="font-bold text-slate-800 text-sm sm:text-base flex items-center gap-2"><Icon className="text-indigo-600" name="group"/> สรุปยอดสถานะของสมาชิกแต่ละคน</h3>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {friends.map(f => {
                 const b = settlementData.balances[f.id];
+                if (!b) return null;
                 const isPositive = b.net > 0.01;
                 const isNegative = b.net < -0.01;
                 return (
@@ -1638,6 +1643,7 @@
       const [promptPay, setPromptPay] = useState('');
       const [bankName, setBankName] = useState('');
       const [bankAccount, setBankAccount] = useState('');
+      const [payAmount, setPayAmount] = useState('');
 
       useEffect(() => {
         if (transfer) {
@@ -1645,6 +1651,7 @@
           setBankName(transfer.bankName || '');
           setBankAccount(transfer.bankAccount || '');
           setIsEditing(false);
+          setPayAmount(transfer.amount.toString());
         }
       }, [transfer]);
 
@@ -1655,16 +1662,17 @@
       };
 
       if (!transfer) return null;
+      const finalAmount = parseFloat(payAmount) || 0;
 
       return (
-        <Modal isOpen={isOpen} onClose={onClose} noPadding>
+        <Modal isOpen={isOpen} noPadding onClose={onClose}>
           <div className="bg-gradient-to-br from-indigo-900 to-blue-800 p-5 text-white relative">
             <button onClick={onClose} className="absolute top-4 right-4 z-10 text-indigo-200 hover:text-white bg-white/10 hover:bg-white/30 rounded-full p-1 transition flex items-center justify-center">
-              <Icon name="close" className="text-lg" />
+              <Icon className="text-lg" name="close"/>
             </button>
             <div className="flex items-center gap-3 mb-1 pr-6">
-              <div className="bg-yellow-400 p-1.5 rounded-lg"><Icon name="qr_code_scanner" className="text-indigo-900 text-xl"/></div>
-              <h2 className="text-lg font-bold">PromptPay QR <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 border border-emerald-400/30 rounded-md ml-2">ระบุยอดเงินให้อัตโนมัติ</span></h2>
+              <div className="bg-yellow-400 p-1.5 rounded-lg"><Icon className="text-indigo-900 text-xl" name="qr_code_scanner"/></div>
+              <h2 className="text-lg font-bold">PromptPay QR</h2>
             </div>
             <p className="text-indigo-200 text-sm ml-12">{transfer.fromName} ➔ {transfer.toName}</p>
           </div>
@@ -1696,37 +1704,58 @@
               </div>
             ) : (
               <div className="space-y-4 animate-fade-in">
-                <div className="bg-emerald-50 border border-emerald-200 p-5 rounded-2xl text-center shadow-sm">
-                  <p className="text-[11px] font-bold text-emerald-800 mb-1">ยอดเงินโอนสุทธิ (ระบุให้แล้ว):</p>
-                  <h3 className="text-4xl font-mono font-extrabold text-emerald-600">{transfer.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</h3>
-                  <p className="text-[10px] text-emerald-700 mt-2 font-medium">สแกนแล้ว ยอดจะขึ้นตรงตามนี้ทันทีโดยไม่ต้องระบุตัวเลขเอง!</p>
+                <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-center shadow-sm">
+                  <p className="text-[11px] font-bold text-emerald-800 mb-2">แก้ไขยอดเงินโอน (QR จะเปลี่ยนตาม):</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <input type="text" inputMode="decimal" value={payAmount} onChange={e=>setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} className="w-32 text-3xl font-mono font-extrabold text-emerald-600 bg-transparent border-b-2 border-emerald-300 focus:border-emerald-600 outline-none text-center transition-colors" />
+                    <span className="text-xl font-bold text-emerald-600">฿</span>
+                  </div>
                 </div>
 
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-                  <PromptPayQR promptPay={transfer.promptPay} amount={transfer.amount} />
+                  <PromptPayQR amount={finalAmount} promptPay={transfer.promptPay}/>
                 </div>
 
                 <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-xs space-y-2 text-slate-600">
                   <div className="flex justify-between"><span className="text-slate-400">ผู้รับเงิน:</span> <strong className="text-slate-800">{transfer.toName}</strong></div>
                   <div className="flex justify-between"><span className="text-slate-400">เบอร์/ID พร้อมเพย์:</span> <strong className="font-mono text-slate-800">{transfer.promptPay || '-'}</strong></div>
                   <div className="flex justify-between"><span className="text-slate-400">บัญชีธนาคาร:</span> <span className="font-mono text-slate-800">{transfer.bankName ? `${transfer.bankName} ${transfer.bankAccount}` : '-'}</span></div>
-                  <div className="flex justify-between pt-2 border-t border-slate-100"><span className="text-slate-400">ผู้โอนเงิน:</span> <span className="text-slate-800 font-medium">{transfer.fromName}</span></div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => { navigator.clipboard.writeText(transfer.amount.toString()); alert('คัดลอกยอดเงินแล้ว'); }} className="py-3 bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 flex items-center justify-center gap-1.5 hover:bg-emerald-100 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกยอด</button>
-                  <button onClick={() => { navigator.clipboard.writeText(transfer.promptPay || transfer.bankAccount); alert('คัดลอกเลขบัญชีแล้ว'); }} className="py-3 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 flex items-center justify-center gap-1.5 hover:bg-slate-200 transition"><Icon name="content_copy" className="text-[16px]"/> คัดลอกเลขบัญชี</button>
                 </div>
 
                 <div className="flex justify-between items-center pt-2 px-1">
-                  <button onClick={()=>setIsEditing(true)} className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 hover:underline"><Icon name="edit" className="text-[14px]"/> แก้ไขเลขบัญชี</button>
-                  <button onClick={() => { onSettle(transfer); onClose(); }} className="text-[11px] text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-100"><Icon name="check_circle" className="text-[14px]"/> เคลียร์ยอดเลย</button>
+                  <button onClick={()=>setIsEditing(true)} className="text-[10px] text-indigo-600 font-bold flex items-center gap-1 hover:underline"><Icon className="text-[14px]" name="edit"/> แก้ไขเลขบัญชี</button>
+                  <button onClick={() => onSettle(transfer, finalAmount)} className="text-[11px] text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-100"><Icon className="text-[14px]" name="check_circle"/> เคลียร์ยอดเลย</button>
                 </div>
               </div>
             )}
           </div>
         </Modal>
       );
+    }
+
+    function PaymentModal({ isOpen, onClose, transfer, onConfirm }) {
+      const [amount, setAmount] = useState('');
+      useEffect(() => { if (transfer) setAmount(transfer.amount.toString()) }, [transfer]);
+      
+      if (!isOpen || !transfer) return null;
+      
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="ระบุยอดที่ต้องการชำระ">
+          <div className="p-5 sm:p-6 bg-slate-50 rounded-b-2xl">
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl mb-5 text-sm shadow-sm">
+              ยอดหนี้เต็มจำนวนที่ต้องโอนให้ <strong>{transfer.toName}</strong> คือ <strong className="text-lg">{transfer.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</strong><br/>
+              <span className="text-[11px] text-emerald-600 mt-1 block">*สามารถแก้ตัวเลขด้านล่างเพื่อชำระบางส่วน (ผ่อนจ่าย) ได้ ยอดที่เหลือจะทบไปรอบหน้า</span>
+            </div>
+            <label className="text-xs font-bold text-slate-700 block mb-2">ระบุยอดเงินที่โอนจริง (บาท)</label>
+            <input type="text" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} className="w-full p-4 text-3xl font-mono font-bold text-center border border-slate-300 rounded-xl focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none shadow-inner text-slate-800 bg-white transition" />
+            
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="w-1/3 py-3.5 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition shadow-sm">ยกเลิก</button>
+              <button disabled={!amount || parseFloat(amount) <= 0} onClick={() => onConfirm(transfer, parseFloat(amount))} className="w-2/3 py-3.5 bg-emerald-600 text-white font-bold rounded-xl shadow-md hover:bg-emerald-700 disabled:opacity-50 transition flex items-center justify-center gap-2"><Icon className="text-[18px]" name="check_circle"/> ไปหน้ายืนยัน</button>
+            </div>
+          </div>
+        </Modal>
+      )
     }
 
     function LineShareModal({ isOpen, onClose, meals, friends, settledDebts }) {
