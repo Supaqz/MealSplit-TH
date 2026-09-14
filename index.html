@@ -103,24 +103,36 @@
       return categories.find(c => c.id === m.categoryId) || DEFAULT_CATEGORIES[0];
     };
 
-    function calculateSettlement(meals, friends, settledDebts, mode = 'all') {
-      const filteredMeals = meals.filter(m => {
-        if (mode === 'food_only') return !m.isCustomDebt;
-        if (mode === 'debt_only') return m.isCustomDebt;
+    function calculateSettlement(meals = [], friends = [], settledDebts = [], mode = 'all', dateFilter = 'all', customDate = '') {
+      const safeMeals = meals || [];
+      const safeFriends = friends || [];
+      const safeSettled = settledDebts || [];
+
+      const filteredMeals = safeMeals.filter(m => {
+        if (mode === 'food_only' && m.isCustomDebt) return false;
+        if (mode === 'debt_only' && !m.isCustomDebt) return false;
         if (m.isCustomDebt && m.includeInAutoSettle === false) return false;
+
+        if (dateFilter === 'day' && customDate) {
+          if (m.date !== customDate) return false;
+        } else if (dateFilter === 'month' && customDate) {
+          if (!m.date.startsWith(customDate.slice(0, 7))) return false;
+        }
         return true;
       });
 
+      const effectiveSettled = dateFilter === 'all' ? safeSettled : [];
+
       const balances = {};
-      friends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
+      safeFriends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
 
       const directDebts = {};
       const directHistory = {}; 
       
-      friends.forEach(f => {
+      safeFriends.forEach(f => {
         directDebts[f.id] = {};
         directHistory[f.id] = {};
-        friends.forEach(f2 => {
+        safeFriends.forEach(f2 => {
           directDebts[f.id][f2.id] = 0;
           directHistory[f.id][f2.id] = [];
         });
@@ -130,28 +142,51 @@
       
       filteredMeals.forEach(m => {
         totalExpense += m.finalAmount;
-        if(balances[m.payerId]) {
-          balances[m.payerId].totalPaid += m.finalAmount;
-          balances[m.payerId].net += m.finalAmount;
-        }
-        m.participants.forEach(p => {
-          if(balances[p.friendId]) {
-            balances[p.friendId].totalOwed += p.amount;
-            balances[p.friendId].net -= p.amount;
-            
-            if (p.friendId !== m.payerId) {
-              directDebts[p.friendId][m.payerId] += p.amount;
-              directHistory[p.friendId][m.payerId].push({ mealTitle: m.title, date: m.date, amount: p.amount });
-            }
+        
+        const mealPayers = (m.payers && m.payers.length > 0) 
+            ? m.payers 
+            : [{ friendId: m.payerId, amount: m.finalAmount }];
+        
+        const totalPaidInMeal = mealPayers.reduce((s, p) => s + p.amount, 0) || 1;
+
+        mealPayers.forEach(payer => {
+          if(balances[payer.friendId]) {
+            balances[payer.friendId].totalPaid += payer.amount;
+            balances[payer.friendId].net += payer.amount;
           }
         });
+
+        if (m.participants) {
+          m.participants.forEach(p => {
+            if(balances[p.friendId]) {
+              balances[p.friendId].totalOwed += p.amount;
+              balances[p.friendId].net -= p.amount;
+              
+              mealPayers.forEach(payer => {
+                if (p.friendId !== payer.friendId && payer.amount > 0) {
+                  if (directDebts[p.friendId] && directDebts[p.friendId][payer.friendId] !== undefined) {
+                    const proportionalDebt = p.amount * (payer.amount / totalPaidInMeal);
+                    directDebts[p.friendId][payer.friendId] += proportionalDebt;
+                    directHistory[p.friendId][payer.friendId].push({ 
+                      mealTitle: m.title + (mealPayers.length > 1 ? ` (ร่วมจ่าย)` : ''), 
+                      date: m.date, 
+                      amount: proportionalDebt 
+                    });
+                  }
+                }
+              });
+            }
+          });
+        }
       });
 
-      settledDebts.forEach(s => {
+      effectiveSettled.forEach(s => {
         if(balances[s.fromId] && balances[s.toId]) {
           balances[s.fromId].net += s.amount;
           balances[s.toId].net -= s.amount;
-          directDebts[s.fromId][s.toId] -= s.amount; 
+          if (directDebts[s.fromId] && directDebts[s.fromId][s.toId] !== undefined) {
+            directDebts[s.fromId][s.toId] -= s.amount; 
+          }
         }
       });
 
@@ -159,15 +194,15 @@
       const processedPairs = new Set();
       let activeMealsSet = new Set();
 
-      friends.forEach(f1 => {
-        friends.forEach(f2 => {
+      safeFriends.forEach(f1 => {
+        safeFriends.forEach(f2 => {
           if (f1.id === f2.id) return;
           const pairKey = [f1.id, f2.id].sort().join('_');
           if (processedPairs.has(pairKey)) return;
           processedPairs.add(pairKey);
 
-          const f1OwesF2 = directDebts[f1.id][f2.id];
-          const f2OwesF1 = directDebts[f2.id][f1.id];
+          const f1OwesF2 = directDebts[f1.id]?.[f2.id] || 0;
+          const f2OwesF1 = directDebts[f2.id]?.[f1.id] || 0;
           const net = f1OwesF2 - f2OwesF1;
 
           if (Math.abs(net) > 0.01) {
@@ -181,27 +216,30 @@
               fromName = f1.name; toName = f2.name;
               fromColor = f1.color; toColor = f2.color;
               creditor = f2;
-              historyFromOwesTo = directHistory[f1.id][f2.id];
-              historyToOwesFrom = directHistory[f2.id][f1.id];
-              settledFromToTotal = settledDebts.filter(s => s.fromId === f1.id && s.toId === f2.id).reduce((s, h) => s + h.amount, 0);
-              settledToFromTotal = settledDebts.filter(s => s.fromId === f2.id && s.toId === f1.id).reduce((s, h) => s + h.amount, 0);
+              historyFromOwesTo = directHistory[f1.id]?.[f2.id] || [];
+              historyToOwesFrom = directHistory[f2.id]?.[f1.id] || [];
+              settledFromToTotal = effectiveSettled.filter(s => s.fromId === f1.id && s.toId === f2.id).reduce((s, h) => s + h.amount, 0);
+              settledToFromTotal = effectiveSettled.filter(s => s.fromId === f2.id && s.toId === f1.id).reduce((s, h) => s + h.amount, 0);
             } else {
               fromId = f2.id; toId = f1.id; amount = Math.abs(net);
               fromName = f2.name; toName = f1.name;
               fromColor = f2.color; toColor = f1.color;
               creditor = f1;
-              historyFromOwesTo = directHistory[f2.id][f1.id];
-              historyToOwesFrom = directHistory[f1.id][f2.id];
-              settledFromToTotal = settledDebts.filter(s => s.fromId === f2.id && s.toId === f1.id).reduce((s, h) => s + h.amount, 0);
-              settledToFromTotal = settledDebts.filter(s => s.fromId === f1.id && s.toId === f2.id).reduce((s, h) => s + h.amount, 0);
+              historyFromOwesTo = directHistory[f2.id]?.[f1.id] || [];
+              historyToOwesFrom = directHistory[f1.id]?.[f2.id] || [];
+              settledFromToTotal = effectiveSettled.filter(s => s.fromId === f2.id && s.toId === f1.id).reduce((s, h) => s + h.amount, 0);
+              settledToFromTotal = effectiveSettled.filter(s => s.fromId === f1.id && s.toId === f2.id).reduce((s, h) => s + h.amount, 0);
             }
 
             fromOwesToTotal = historyFromOwesTo.reduce((s, h) => s + h.amount, 0) - settledFromToTotal;
             toOwesFromTotal = historyToOwesFrom.reduce((s, h) => s + h.amount, 0) - settledToFromTotal;
 
             filteredMeals.forEach(m => {
-              if ((m.payerId === toId && m.participants.some(p => p.friendId === fromId)) ||
-                  (m.payerId === fromId && m.participants.some(p => p.friendId === toId))) {
+              const mPayers = (m.payers && m.payers.length > 0) ? m.payers : [{ friendId: m.payerId }];
+              const isPayer = mPayers.some(p => p.friendId === toId || p.friendId === fromId);
+              const isParticipant = m.participants && m.participants.some(p => p.friendId === toId || p.friendId === fromId);
+
+              if (isPayer && isParticipant) {
                  activeMealsSet.add(m.id);
               }
             });
@@ -211,9 +249,9 @@
               fromId, fromName, fromColor,
               toId, toName, toColor,
               amount, 
-              promptPay: creditor.promptPay,
-              bankName: creditor.bankName, 
-              bankAccount: creditor.bankAccount,
+              promptPay: creditor?.promptPay,
+              bankName: creditor?.bankName, 
+              bankAccount: creditor?.bankAccount,
               fromOwesToTotal, toOwesFromTotal,
               historyFromOwesTo, historyToOwesFrom,
               settledFromToTotal, settledToFromTotal,
@@ -228,7 +266,7 @@
       let activeTotalExpense = 0;
       let activeMealsList = [];
       activeMealsSet.forEach(mealId => {
-        const m = meals.find(x => x.id === mealId);
+        const m = safeMeals.find(x => x.id === mealId);
         if (m) {
           activeTotalExpense += m.finalAmount;
           activeMealsList.push(m);
@@ -376,48 +414,14 @@
         }
       };
 
-      const handleAddMeal = async (e) => {
-        e.preventDefault();
-        const formData = new FormData(e.target);
-        const title = formData.get('title').trim();
-        const baseAmount = parseFloat(formData.get('amount'));
-        const payerId = formData.get('payerId');
-        const participantIds = formData.getAll('participants');
-        
-        if (title && baseAmount && payerId && participantIds.length > 0) {
-          const hasVat = formData.get('hasVat') !== null;
-          const hasSc = formData.get('hasServiceCharge') !== null;
-          const discountAmt = parseFloat(formData.get('discount')) || 0;
-          const rounding = formData.get('rounding') || 'actual';
-          const time = formData.get('time') || ''; // ดึงเวลา
-
-          let calcFinal = baseAmount - discountAmt;
-          if (hasSc) calcFinal += (calcFinal * 0.10);
-          if (hasVat) calcFinal += (calcFinal * 0.07);
-
-          let splitAmountRaw = calcFinal / participantIds.length;
-          let splitAmount = splitAmountRaw;
-          if (rounding === 'ceil') splitAmount = Math.ceil(splitAmountRaw);
-          else if (rounding === 'round') splitAmount = Math.round(splitAmountRaw);
-          else if (rounding === 'floor') splitAmount = Math.floor(splitAmountRaw);
-
-          const adjustedFinal = splitAmount * participantIds.length;
-          const participants = participantIds.map(id => ({ friendId: id, amount: splitAmount }));
-
-          const data = {
-            title, date: formData.get('date'), time, categoryId: formData.get('category'), // บันทึกเวลา
-            baseAmount, finalAmount: adjustedFinal, discount: discountAmt, hasVat, hasServiceCharge: hasSc, 
-            payerId, participants, splitMode: 'equal', roundingMode: rounding, isCustomDebt: false
-          };
-
-          if (editingMeal && editingMeal.id) {
-            await db.collection('meals').doc(editingMeal.id).update(data);
-          } else {
-            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-            await db.collection('meals').add(data);
-          }
-          closeModal('addMeal');
-        } else alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+      const handleAddMeal = async (data, id) => {
+        if (id) {
+          await db.collection('meals').doc(id).update(data);
+        } else {
+          data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+          await db.collection('meals').add(data);
+        }
+        closeModal('addMeal');
       };
 
       const handleSaveCustomDebt = async (data, id) => {
@@ -458,21 +462,6 @@
         const copyData = {...m, id: null, title: m.title + ' (คัดลอก)'};
         if (m.isCustomDebt) openModal('addDebt', copyData);
         else openModal('addMeal', copyData);
-      };
-
-      const shareToLine = () => {
-        if (settleData.transfers.length === 0) {
-          alert('ไม่มีหนี้ค้างชำระ');
-          return;
-        }
-        let text = `💸 สรุปยอดหารค่าอาหารและหนี้ค้าง (${settleData.activeMealsList.length} รายการ)\nยอดรวมที่ต้องเคลียร์: ${settleData.activeTotalExpense.toLocaleString()} บาท\n\n📌 ยอดที่ต้องโอนสุทธิ:\n`;
-        settleData.transfers.forEach(t => {
-          text += `👉 ${t.fromName} โอนให้ ${t.toName}: ${t.amount.toLocaleString()} ฿\n`;
-          if (t.promptPay) text += `   พร้อมเพย์: ${t.promptPay}\n`;
-          else if (t.bankAccount) text += `   บัญชี: ${t.bankName} ${t.bankAccount}\n`;
-        });
-        text += `\n✨ คำนวณโดย MealSplit TH`;
-        window.open(`https://line.me/R/msg/text/?${encodeURIComponent(text)}`, '_blank');
       };
 
       const settleData = useMemo(() => calculateSettlement(meals, friends, settledDebts), [meals, friends, settledDebts]);
@@ -658,8 +647,8 @@
 
           <CategoryManagerModal isOpen={modals.category} onClose={() => closeModal('category')} categories={categories} showConfirm={showConfirm} />
           <QRCodeModal isOpen={modals.qr} onClose={() => closeModal('qr')} transfer={selectedTransfer} onSettle={handleSettleDebt} />
-         <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} meals={meals} friends={friends} settledDebts={settledDebts} />
-         <LineShareModal isOpen={modals.lineShare} onClose={() => closeModal('lineShare')} meals={meals} friends=   {friends} settledDebts={settledDebts} />
+          <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} meals={meals} friends={friends} settledDebts={settledDebts} />
+          <LineShareModal isOpen={modals.lineShare} onClose={() => closeModal('lineShare')} meals={meals} friends={friends} settledDebts={settledDebts} />
           <PaymentModal isOpen={modals.payment} onClose={() => closeModal('payment')} transfer={selectedTransfer} onConfirm={handleSettleDebt} />
 
           <ViewMealModal isOpen={modals.viewMeal} onClose={() => closeModal('viewMeal')} meal={viewingMeal} friends={friends} categories={categories}
@@ -686,19 +675,40 @@
     function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenPayment, onOpenQR, exportToImage, shareToLine }) {
       const [expandedId, setExpandedId] = useState(null);
       const [netMode, setNetMode] = useState('all'); 
+      const [dateFilter, setDateFilter] = useState('all');
+      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
-      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode), [meals, friends, settledDebts, netMode]);
+      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode, dateFilter, selectedDate), [meals, friends, settledDebts, netMode, dateFilter, selectedDate]);
 
       return (
         <div className="space-y-6 animate-fade-in pb-10">
-          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 pl-2">
-              <Icon className="text-indigo-600 text-sm" name="tune"/> เลือกมุมมองการเคลียร์หนี้:
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4">
+            {/* ตัวเลือกช่วงเวลา */}
+            <div className="flex-1">
+              <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2 pl-1">
+                <Icon className="text-indigo-600 text-sm" name="calendar_today"/> เลือกช่วงเวลา:
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="p-2.5 text-xs font-bold rounded-xl bg-slate-50 border border-slate-200 outline-none cursor-pointer focus:border-indigo-500 w-full sm:w-auto">
+                  <option value="all">ดูยอดสะสมทั้งหมด</option>
+                  <option value="day">ดูเฉพาะยอดรายวัน</option>
+                </select>
+                {dateFilter === 'day' && (
+                  <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="p-2 text-xs font-bold rounded-xl bg-slate-50 border border-slate-200 outline-none focus:border-indigo-500 w-full sm:w-auto" />
+                )}
+              </div>
             </div>
-            <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
-              <button onClick={() => setNetMode('all')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'all' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>รวมค่าข้าว + หนี้ค้าง</button>
-              <button onClick={() => setNetMode('food_only')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'food_only' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>เฉพาะค่าข้าว</button>
-              <button onClick={() => setNetMode('debt_only')} className={`flex-1 sm:flex-none px-4 py-2 text-xs font-bold rounded-lg transition ${netMode === 'debt_only' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>💸 เฉพาะหนี้ค้างต่างหาก</button>
+
+            {/* ตัวเลือกหมวดหมู่ */}
+            <div className="flex-1 md:border-l md:border-slate-100 md:pl-4">
+              <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2 pl-1">
+                <Icon className="text-indigo-600 text-sm" name="tune"/> กรองประเภท:
+              </div>
+              <div className="flex bg-slate-100 p-1 rounded-xl w-full">
+                <button onClick={() => setNetMode('all')} className={`flex-1 px-2 py-2 text-[11px] sm:text-xs font-bold rounded-lg transition ${netMode === 'all' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>รวมทั้งหมด</button>
+                <button onClick={() => setNetMode('food_only')} className={`flex-1 px-2 py-2 text-[11px] sm:text-xs font-bold rounded-lg transition ${netMode === 'food_only' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>ค่าข้าว</button>
+                <button onClick={() => setNetMode('debt_only')} className={`flex-1 px-2 py-2 text-[11px] sm:text-xs font-bold rounded-lg transition ${netMode === 'debt_only' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}>หนี้ค้าง</button>
+              </div>
             </div>
           </div>
 
@@ -708,7 +718,7 @@
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm text-slate-500 font-bold">
-                    {netMode === 'debt_only' ? 'ยอดหนี้ค้างรวม' : netMode === 'food_only' ? 'ยอดค่าข้าวรวม' : 'ยอดรวมทั้งหมด (ที่ยังไม่เคลียร์)'}
+                    {dateFilter === 'day' ? 'ยอดที่หารกันเฉพาะวันนี้' : 'ยอดค้างชำระสะสมทั้งหมด'}
                   </span>
                   <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md font-bold">{settlementData.activeMealsList.length} รายการ</span>
                 </div>
@@ -720,6 +730,16 @@
               <button onClick={shareToLine} className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-emerald-50 text-[#06C755] border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 flex items-center gap-1.5 transition"><Icon className="text-[16px]" name="share"/> แชร์ LINE</button>
             </div>
           </div>
+
+          {dateFilter !== 'all' && (
+            <div className="bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-xl text-xs font-bold flex items-start gap-2 shadow-sm">
+              <Icon name="info" className="text-lg shrink-0"/> 
+              <div>
+                <span className="text-blue-800">มุมมองรายวัน:</span> ระบบจะแสดงเฉพาะยอดที่เกิดขึ้นในวันที่เลือก โดยไม่นำประวัติการโอนหนี้เก่ามาหักล้าง 
+                <br/><span className="font-medium text-blue-600 mt-1 block">หากต้องการดูยอดสุทธิ หรือต้องการ "กดเคลียร์หนี้" กรุณาเปลี่ยนช่วงเวลาเป็น <strong className="underline cursor-pointer" onClick={()=>setDateFilter('all')}>"ดูยอดสะสมทั้งหมด"</strong></span>
+              </div>
+            </div>
+          )}
 
           {settlementData.transfers.length > 0 && (
             <div className="bg-[#FFFAEB] border border-amber-200 rounded-2xl p-5 sm:p-6 shadow-sm relative overflow-hidden">
@@ -795,9 +815,16 @@
                         <button onClick={() => { navigator.clipboard.writeText(t.promptPay || t.bankAccount || ''); alert('คัดลอกเลขบัญชีแล้ว'); }} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition">
                           <Icon className="text-[18px]" name="content_copy"/> คัดลอกเลข
                         </button>
-                        <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
-                          <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
-                        </button>
+                        
+                        {dateFilter === 'all' ? (
+                          <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
+                            <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
+                          </button>
+                        ) : (
+                          <button disabled className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold transition">
+                            <Icon className="text-[16px]" name="block"/> กรุณาดูยอดรวมเพื่อเคลียร์หนี้
+                          </button>
+                        )}
                       </div>
                       
                       <div className="mt-4 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-3 text-xs">
@@ -1086,7 +1113,9 @@
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
             {filteredMeals.map(m => {
-              const payer = friends.find(f => f.id === m.payerId);
+              const mealPayers = (m.payers && m.payers.length > 0) ? m.payers : [{ friendId: m.payerId }];
+              const payerNames = mealPayers.map(p => friends.find(f => f.id === p.friendId)?.name || '?').join(', ');
+              
               const parts = m.participants.map(p => friends.find(f=>f.id===p.friendId));
               const cat = getCategoryInfo(m, categories);
               
@@ -1099,7 +1128,7 @@
                     </div>
                     <h4 className="font-bold text-slate-800 text-lg mb-4 line-clamp-2">{m.title}</h4>
                     <div className="flex items-center gap-4 text-xs text-slate-500 mb-4">
-                      <p>{m.isCustomDebt ? 'เจ้าหนี้:' : 'คนจ่าย:'} <strong className={`${m.isCustomDebt ? 'text-emerald-600' : 'text-indigo-600'}`}>{payer?.name || '?'}</strong></p>
+                      <p>{m.isCustomDebt ? 'เจ้าหนี้:' : 'คนจ่าย:'} <strong className={`${m.isCustomDebt ? 'text-emerald-600' : 'text-indigo-600'} truncate max-w-[120px] inline-block align-bottom`}>{payerNames}</strong></p>
                       <div className="flex items-center gap-1.5">
                         <span>{m.isCustomDebt ? 'ลูกหนี้' : 'คนหาร'} ({parts.length}):</span>
                         <div className="flex -space-x-1">
@@ -1171,8 +1200,9 @@
 
     function ViewMealModal({ isOpen, onClose, meal, friends, categories, onEdit, onDelete }) {
       if (!isOpen || !meal) return null;
-      const payer = friends.find(f => f.id === meal.payerId);
       const cat = getCategoryInfo(meal, categories);
+      const mealPayers = (meal.payers && meal.payers.length > 0) ? meal.payers : [{ friendId: meal.payerId, amount: meal.finalAmount }];
+
       return (
         <Modal isOpen={isOpen} onClose={onClose} noPadding>
           <div className={`bg-gradient-to-br ${meal.isCustomDebt ? 'from-rose-600 to-rose-800' : 'from-indigo-700 to-indigo-900'} p-6 text-white rounded-t-2xl relative`}>
@@ -1194,9 +1224,19 @@
           </div>
           <div className="p-6 bg-slate-50 rounded-b-2xl space-y-4">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-sm space-y-3">
-              <div className="flex justify-between items-center pb-3 border-b border-slate-100">
+              <div className="flex flex-col gap-2 pb-3 border-b border-slate-100">
                 <span className="text-slate-500 font-bold flex items-center gap-1.5"><Icon className="text-emerald-500" name="account_balance_wallet"/> {meal.isCustomDebt ? 'เจ้าหนี้:' : 'คนสำรองจ่าย:'}</span>
-                <span className="font-bold text-slate-800">{payer?.name || '?'}</span>
+                <div className="space-y-1.5">
+                  {mealPayers.map((p, i) => {
+                    const f = friends.find(x => x.id === p.friendId);
+                    return (
+                      <div key={i} className="flex justify-between items-center text-xs">
+                        <span className="font-bold text-slate-800">{f?.name || '?'}</span>
+                        {mealPayers.length > 1 && <span className="font-mono text-emerald-600 font-bold">{p.amount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
               <div>
                 <span className="text-slate-500 font-bold flex items-center gap-1.5 mb-2"><Icon className="text-rose-500" name={meal.isCustomDebt ? "money_off" : "restaurant"}/> {meal.isCustomDebt ? 'ลูกหนี้' : 'คนร่วมทาน'} ({meal.participants.length} คน):</span>
@@ -1358,7 +1398,7 @@
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
               <button disabled={!amount || !creditorId} type="submit" className="w-2/3 bg-rose-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-rose-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
-                <Icon className="text-[18px]" name="check_circle"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ค้าง'}
+                <Icon className="text-[18px]" name="check_circle"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันหนี้ค้าง'}
               </button>
             </div>
           </form>
@@ -1372,7 +1412,10 @@
       const [hasVat, setHasVat] = useState(false);
       const [hasSc, setHasSc] = useState(false);
       const [rounding, setRounding] = useState('actual');
+      
+      const [payerMode, setPayerMode] = useState('single');
       const [payerId, setPayerId] = useState('');
+      const [multiPayers, setMultiPayers] = useState({});
       const [participants, setParticipants] = useState({});
 
       useEffect(() => {
@@ -1386,10 +1429,22 @@
             setHasVat(initialData.hasVat || false);
             setHasSc(initialData.hasServiceCharge || false);
             setRounding(initialData.roundingMode || 'actual');
-            setPayerId(initialData.payerId || '');
+            
+            if (initialData.payers && initialData.payers.length > 1) {
+              setPayerMode('multi');
+              const initMulti = {};
+              initialData.payers.forEach(p => initMulti[p.friendId] = p.amount);
+              setMultiPayers(initMulti);
+              setPayerId(initialData.payers[0].friendId);
+            } else {
+              setPayerMode('single');
+              setPayerId(initialData.payerId || (initialData.payers ? initialData.payers[0]?.friendId : ''));
+              setMultiPayers({});
+            }
           } else {
             friends.forEach(f => initialParts[f.id] = true);
-            setAmount(''); setDiscount(''); setHasVat(false); setHasSc(false); setRounding('actual'); setPayerId('');
+            setAmount(''); setDiscount(''); setHasVat(false); setHasSc(false); setRounding('actual'); 
+            setPayerMode('single'); setPayerId(''); setMultiPayers({});
           }
           setParticipants(initialParts);
         }
@@ -1416,9 +1471,57 @@
       const toggleParticipant = (id) => setParticipants(prev => ({ ...prev, [id]: !prev[id] }));
       const selectAll = () => { const next = {}; friends.forEach(f => next[f.id] = true); setParticipants(next); };
 
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const title = formData.get('title').trim();
+        const activeIds = Object.keys(participants).filter(id => participants[id]);
+        
+        if (!title || !baseAmount || activeIds.length === 0) return alert('กรุณากรอกข้อมูลและเลือกคนหารให้ครบถ้วน');
+
+        let finalPayers = [];
+        if (payerMode === 'single') {
+          if (!payerId) return alert('กรุณาเลือกคนสำรองจ่าย');
+          finalPayers = [{ friendId: payerId, amount: adjustedFinal }];
+        } else {
+          let totalPaid = 0;
+          Object.entries(multiPayers).forEach(([id, amtStr]) => {
+            const amt = parseFloat(amtStr) || 0;
+            if (amt > 0) {
+              finalPayers.push({ friendId: id, amount: amt });
+              totalPaid += amt;
+            }
+          });
+          if (finalPayers.length === 0) return alert('กรุณาระบุยอดคนจ่ายอย่างน้อย 1 คน');
+          if (Math.abs(totalPaid - adjustedFinal) > 0.1) {
+            return alert(`ยอดรวมคนจ่าย (${totalPaid.toLocaleString('th-TH')}) ไม่ตรงกับยอดบิลสุทธิ (${adjustedFinal.toLocaleString('th-TH')})`);
+          }
+        }
+
+        const data = {
+          title, 
+          date: formData.get('date'), 
+          time: formData.get('time') || '', 
+          categoryId: formData.get('category'), 
+          baseAmount, 
+          finalAmount: adjustedFinal, 
+          discount: discountAmt, 
+          hasVat, 
+          hasServiceCharge: hasSc, 
+          payerId: finalPayers[0].friendId, 
+          payers: finalPayers,
+          participants: activeIds.map(id => ({ friendId: id, amount: splitAmount })), 
+          splitMode: 'equal', 
+          roundingMode: rounding, 
+          isCustomDebt: false
+        };
+
+        onSubmit(data, initialData?.id);
+      };
+
       return (
         <Modal isOpen={isOpen} onClose={onClose} title={initialData?.id ? "แก้ไขมื้ออาหาร" : "บันทึกมื้ออาหารใหม่"} fullWidth>
-          <form key={initialData?.id || 'new'} onSubmit={onSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
+          <form key={initialData?.id || 'new'} onSubmit={handleSubmit} className="bg-slate-50 p-4 sm:p-5 rounded-b-2xl space-y-5">
             <input type="hidden" name="rounding" value={rounding} />
             <div className="space-y-4 bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
               <div>
@@ -1490,19 +1593,36 @@
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
               <div className="flex justify-between items-center mb-3">
                 <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Icon className="text-amber-600 text-[18px]" name="account_balance_wallet"/> ใครเป็นคนสำรองจ่ายเงิน?</label>
+                <button type="button" onClick={() => setPayerMode(payerMode === 'single' ? 'multi' : 'single')} className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100 hover:bg-indigo-100 transition">
+                  {payerMode === 'single' ? 'แยกจ่ายหลายคน' : 'กลับไปจ่ายคนเดียว'}
+                </button>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {friends.map(f => (
-                  <label key={f.id} className="cursor-pointer">
-                    <input type="radio" name="payerId" value={f.id} checked={payerId === f.id} onChange={(e) => setPayerId(e.target.value)} className="peer sr-only" required />
-                    <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-indigo-50 peer-checked:border-indigo-600 peer-checked:ring-1 peer-checked:ring-indigo-600 transition">
-                      <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
-                      <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
+
+              {payerMode === 'single' ? (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {friends.map(f => (
+                    <label key={f.id} className="cursor-pointer">
+                      <input type="radio" name="payerId" value={f.id} checked={payerId === f.id} onChange={(e) => setPayerId(e.target.value)} className="peer sr-only" />
+                      <div className="p-2.5 rounded-xl border border-slate-200 bg-white flex items-center gap-2 peer-checked:bg-indigo-50 peer-checked:border-indigo-600 peer-checked:ring-1 peer-checked:ring-indigo-600 transition">
+                        <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                        <span className="text-xs font-bold text-slate-700 truncate">{f.name}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {friends.map(f => (
+                    <div key={f.id} className="flex items-center justify-between p-2.5 rounded-xl border border-slate-200 bg-white">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-6 h-6 rounded-md text-white font-bold flex items-center justify-center text-xs ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                        <span className="text-xs font-bold text-slate-700 truncate max-w-[80px]">{f.name}</span>
+                      </div>
+                      <input type="text" inputMode="decimal" value={multiPayers[f.id] || ''} onChange={e => setMultiPayers({...multiPayers, [f.id]: e.target.value.replace(/[^0-9.]/g, '')})} placeholder="0.00 ฿" className="w-24 text-right p-1.5 text-xs font-mono font-bold border border-slate-300 rounded outline-none focus:border-indigo-500" />
                     </div>
-                  </label>
-                ))}
-                {friends.length === 0 && <p className="text-xs text-rose-500 col-span-full">กรุณาเพิ่มเพื่อนในแท็บ 'เพื่อน' ก่อน</p>}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm">
@@ -1513,14 +1633,16 @@
               <div className="grid grid-cols-2 gap-3">
                 {friends.map(f => {
                   const isChecked = participants[f.id];
-                  const isPayer = payerId === f.id;
-                  const paidAmount = isPayer ? adjustedFinal : 0;
+                  
+                  let paidAmount = 0;
+                  if (payerMode === 'single' && payerId === f.id) paidAmount = adjustedFinal;
+                  if (payerMode === 'multi') paidAmount = parseFloat(multiPayers[f.id]) || 0;
+
                   const owedAmount = isChecked ? splitAmount : 0;
                   const net = paidAmount - owedAmount;
                   
                   return (
                     <div key={f.id} onClick={() => toggleParticipant(f.id)} className={`p-3 rounded-xl border cursor-pointer flex flex-col justify-between transition ${isChecked ? 'bg-indigo-50/40 border-indigo-300' : 'bg-white border-slate-200 opacity-60 hover:opacity-100'}`}>
-                      <input type="checkbox" name="participants" value={f.id} checked={isChecked} onChange={() => {}} className="hidden" />
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <div className={`w-4 h-4 rounded border flex items-center justify-center ${isChecked ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white'}`}>
@@ -1531,7 +1653,7 @@
                         <span className={`text-[11px] font-mono font-bold ${isChecked ? 'text-indigo-700' : 'text-slate-400'}`}>ค่ากิน {owedAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
                       </div>
                       <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 text-[10px] text-slate-500">
-                        <span>{isPayer ? <span className="text-rose-600 font-semibold">จ่ายออก {adjustedFinal.toLocaleString()} ฿</span> : 'ไม่ได้จ่ายออก'}</span>
+                        <span>{paidAmount > 0 ? <span className="text-emerald-600 font-semibold">จ่ายมา {paidAmount.toLocaleString()} ฿</span> : 'ไม่ได้จ่ายมา'}</span>
                         <span className={`font-bold px-2 py-0.5 rounded ${net > 0 ? 'bg-emerald-100 text-emerald-700' : net < 0 ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>
                           {net > 0 ? `ได้คืน +${net.toLocaleString()}` : net < 0 ? `จ่ายเพิ่ม ${Math.abs(net).toLocaleString()}` : 'พอดี 0 ฿'}
                         </span>
@@ -1544,7 +1666,7 @@
             
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
-              <button disabled={friends.length === 0 || !amount || !payerId || activeCount === 0} type="submit" className="w-2/3 bg-indigo-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+              <button disabled={friends.length === 0 || activeCount === 0} type="submit" className="w-2/3 bg-indigo-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-indigo-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
                 <Icon className="text-[18px]" name="check_circle"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกบิลอาหาร'}
               </button>
             </div>
@@ -1760,18 +1882,20 @@
 
     function LineShareModal({ isOpen, onClose, meals, friends, settledDebts }) {
       const [dateScope, setDateScope] = useState('all');
-      const [netMode, setNetMode] = useState('net');
+      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+      const [netMode, setNetMode] = useState('all');
 
       const currentMonthStr = new Date().toISOString().slice(0, 7);
-      const targetMonth = dateScope === 'month' ? currentMonthStr : null;
-      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, targetMonth), [meals, friends, settledDebts, targetMonth]);
+      
+      const targetDate = dateScope === 'month' ? currentMonthStr : (dateScope === 'day' ? selectedDate : '');
+      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode, dateScope === 'month' ? 'month' : (dateScope === 'day' ? 'day' : 'all'), targetDate), [meals, friends, settledDebts, netMode, dateScope, targetDate]);
 
       const generateText = () => {
-        let text = `🍽️ สรุปบิลหารค่าข้าว - ${dateScope === 'month' ? 'ประจำเดือนนี้' : 'ทริปหารค่าอาหาร'}\n`;
-        text += `📅 ช่วงเวลา: ${dateScope === 'month' ? THAI_MONTHS[new Date().getMonth()] : 'ยอดรวมสะสมทั้งหมด'}\n`;
+        let text = `🍽️ สรุปบิลหารค่าข้าว - ${dateScope === 'month' ? 'ประจำเดือนนี้' : (dateScope === 'day' ? `ประจำวันที่ ${selectedDate}` : 'ทริปหารค่าอาหาร')}\n`;
+        text += `📅 ช่วงเวลา: ${dateScope === 'month' ? THAI_MONTHS[new Date().getMonth()] : (dateScope === 'day' ? selectedDate : 'ยอดรวมสะสมทั้งหมด')}\n`;
         text += `💰 ยอดรวมทั้งหมด: ${settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ (${settlementData.activeMealsList.length} รายการ)\n`;
         text += `----------------------------------------\n`;
-        text += `⚖️ สรุปยอดหักลบหนี้ (${netMode === 'net' ? 'Netting รายคู่' : 'รวบยอดขั้นต่ำ'}):\n`;
+        text += `⚖️ สรุปยอดหักลบหนี้ (${netMode === 'all' ? 'รวมค่าข้าวและหนี้ค้าง' : (netMode === 'food_only' ? 'เฉพาะค่าข้าว' : 'เฉพาะหนี้ค้าง')}):\n`;
         if (settlementData.transfers.length === 0) {
           text += `✅ ไม่มีหนี้ค้างชำระ\n`;
         } else {
@@ -1787,7 +1911,7 @@
         friends.forEach(f => {
           const b = settlementData.balances[f.id];
           if(b) {
-            text += `• ${f.name}: ออกไป ${b.totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ / กินไป ${b.totalOwed.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ → ${b.net >= 0 ? '🟢 ได้คืน +' + b.net.toLocaleString('th-TH', {minimumFractionDigits:2}) : '🔴 ต้องจ่าย ' + b.net.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿\n`;
+            text += `• ${f.name}: ออกไป ${b.totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ / กินไป ${b.totalOwed.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ → ${b.net >= 0 ? '🟢 ได้คืน +' + b.net.toLocaleString('th-TH', {minimumFractionDigits:2}) : '🔴 ต้องจ่าย ' + Math.abs(b.net).toLocaleString('th-TH', {minimumFractionDigits:2})} ฿\n`;
           }
         });
         text += `\n✨ คำนวณโดย MealSplit TH`;
@@ -1807,16 +1931,23 @@
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="flex-1">
                 <label className="text-xs font-bold text-slate-600 mb-1.5 block">ขอบเขตข้อมูล:</label>
-                <div className="flex bg-slate-200 p-1 rounded-lg">
-                  <button onClick={()=>setDateScope('all')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${dateScope === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>ทั้งหมด ({meals.length} รายการ)</button>
-                  <button onClick={()=>setDateScope('month')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${dateScope === 'month' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เฉพาะเดือนนี้</button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex bg-slate-200 p-1 rounded-lg">
+                    <button onClick={()=>setDateScope('all')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${dateScope === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>ทั้งหมด</button>
+                    <button onClick={()=>setDateScope('month')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${dateScope === 'month' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เดือนนี้</button>
+                    <button onClick={()=>setDateScope('day')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${dateScope === 'day' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>รายวัน</button>
+                  </div>
+                  {dateScope === 'day' && (
+                    <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 outline-none focus:border-indigo-500"/>
+                  )}
                 </div>
               </div>
               <div className="flex-1">
                 <label className="text-xs font-bold text-slate-600 mb-1.5 block">รูปแบบสรุปยอดหนี้:</label>
                 <div className="flex bg-slate-200 p-1 rounded-lg">
-                  <button onClick={()=>setNetMode('net')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${netMode === 'net' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>หักลบรายคู่</button>
-                  <button onClick={()=>setNetMode('gross')} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${netMode === 'gross' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>รวบยอดขั้นต่ำ</button>
+                  <button onClick={()=>setNetMode('all')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${netMode === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>รวมทั้งหมด</button>
+                  <button onClick={()=>setNetMode('food_only')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${netMode === 'food_only' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เฉพาะค่าข้าว</button>
+                  <button onClick={()=>setNetMode('debt_only')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-md transition ${netMode === 'debt_only' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เฉพาะหนี้ค้าง</button>
                 </div>
               </div>
             </div>
@@ -1838,14 +1969,18 @@
         </Modal>
       );
     }
-function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
+
+    function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
       const summaryRef = useRef(null);
       const [style, setStyle] = useState('notebook');
       const [dateScope, setDateScope] = useState('all');
+      const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+      const [netMode, setNetMode] = useState('all');
 
       const currentMonthStr = new Date().toISOString().slice(0, 7);
-      const targetMonth = dateScope === 'month' ? currentMonthStr : null;
-      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, targetMonth), [meals, friends, settledDebts, targetMonth]);
+      
+      const targetDate = dateScope === 'month' ? currentMonthStr : (dateScope === 'day' ? selectedDate : '');
+      const settlementData = useMemo(() => calculateSettlement(meals, friends, settledDebts, netMode, dateScope === 'month' ? 'month' : (dateScope === 'day' ? 'day' : 'all'), targetDate), [meals, friends, settledDebts, netMode, dateScope, targetDate]);
 
       const handleDownload = async () => {
         if (summaryRef.current) {
@@ -1862,9 +1997,15 @@ function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
             <div className="w-full max-w-sm space-y-3 mb-6">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-600 w-24">ขอบเขตข้อมูล:</span>
-                <div className="flex bg-slate-200 p-1 rounded-lg flex-1">
-                  <button onClick={()=>setDateScope('all')} className={`flex-1 py-1 text-xs font-bold rounded-md transition ${dateScope === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>ทั้งหมด</button>
-                  <button onClick={()=>setDateScope('month')} className={`flex-1 py-1 text-xs font-bold rounded-md transition ${dateScope === 'month' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เฉพาะเดือนนี้</button>
+                <div className="flex flex-col w-full gap-2">
+                  <div className="flex bg-slate-200 p-1 rounded-lg">
+                    <button onClick={()=>setDateScope('all')} className={`flex-1 py-1 text-xs font-bold rounded-md transition ${dateScope === 'all' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>ทั้งหมด</button>
+                    <button onClick={()=>setDateScope('month')} className={`flex-1 py-1 text-xs font-bold rounded-md transition ${dateScope === 'month' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>เดือนนี้</button>
+                    <button onClick={()=>setDateScope('day')} className={`flex-1 py-1 text-xs font-bold rounded-md transition ${dateScope === 'day' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}>รายวัน</button>
+                  </div>
+                  {dateScope === 'day' && (
+                    <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="w-full p-2 text-xs font-bold rounded-lg border border-slate-200 outline-none focus:border-indigo-500"/>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1882,6 +2023,7 @@ function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
                   <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
                   <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
                   <p className="text-xs text-slate-500 font-mono mt-1.5">ยอดรวมทั้งหมด {settlementData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿ ({settlementData.activeMealsList.length} รายการ)</p>
+                  {dateScope === 'day' && <p className="text-[10px] font-bold text-indigo-600 mt-1">ประจำวันที่: {selectedDate}</p>}
                 </div>
 
                 <div className="space-y-2 mb-6">
@@ -1904,7 +2046,8 @@ function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
                 <div className="space-y-3 mb-6 border-t border-dashed border-slate-300 pt-5">
                   <h3 className="text-xs font-bold text-slate-800 mb-2">📌 รายละเอียดการออกเงินรายมื้อ:</h3>
                   {settlementData.activeMealsList.map((m, i) => {
-                    const payerName = friends.find(f => f.id === m.payerId)?.name || 'Unknown';
+                    const mealPayers = (m.payers && m.payers.length > 0) ? m.payers : [{ friendId: m.payerId }];
+                    const payerName = mealPayers.map(p => friends.find(f => f.id === p.friendId)?.name || '?').join(', ');
                     const perPerson = m.finalAmount / m.participants.length;
                     return (
                       <div key={i} className={`p-3.5 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'} text-[11px]`}>
@@ -1923,7 +2066,7 @@ function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
                 </div>
 
                 <div className="border-t border-dashed border-slate-300 pt-4 text-[11px] text-slate-600 space-y-1">
-                  <div className="font-bold text-slate-800 mb-1.5 flex items-center gap-1"><Icon name="account_balance_wallet" className="text-[14px]"/> บัญชีพร้อมเพย์สำหรับโอน:</div>
+                  <div className="font-bold text-slate-800 mb-1.5 flex items-center gap-1"><Icon className="text-[14px]" name="account_balance_wallet"/> บัญชีพร้อมเพย์สำหรับโอน:</div>
                   {friends.map(f => f.promptPay ? (
                     <div key={f.id} className="flex justify-between font-mono"><span>{f.name}:</span> <strong>{f.promptPay}</strong></div>
                   ) : null)}
@@ -1941,8 +2084,9 @@ function ImageExportModal({ isOpen, onClose, meals, friends, settledDebts }) {
             </div>
           </div>
         </Modal>
-      );
+      )
     }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
