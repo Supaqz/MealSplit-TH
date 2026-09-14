@@ -735,8 +735,8 @@
             <div className="bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-xl text-xs font-bold flex items-start gap-2 shadow-sm">
               <Icon name="info" className="text-lg shrink-0"/> 
               <div>
-                <span className="text-blue-800">มุมมองรายวัน:</span> ระบบจะแสดงเฉพาะยอดที่เกิดขึ้นในวันที่เลือก โดยไม่นำประวัติการโอนหนี้เก่ามาหักล้าง 
-                <br/><span className="font-medium text-blue-600 mt-1 block">หากต้องการดูยอดสุทธิ หรือต้องการ "กดเคลียร์หนี้" กรุณาเปลี่ยนช่วงเวลาเป็น <strong className="underline cursor-pointer" onClick={()=>setDateFilter('all')}>"ดูยอดสะสมทั้งหมด"</strong></span>
+                <span className="text-blue-800">มุมมองรายวัน:</span> ระบบจะแสดงเฉพาะยอดตั้งต้นที่เกิดขึ้นในวันนั้นๆ 
+                <br/><span className="font-medium text-blue-600 mt-1 block">หากกด <b>"เคลียร์แล้ว"</b> ในหน้านี้ ยอดเงินที่คุณกรอกจะถูกนำไปหักลบออกจากยอดหนี้สะสมหลักให้โดยอัตโนมัติ</span>
               </div>
             </div>
           )}
@@ -815,16 +815,9 @@
                         <button onClick={() => { navigator.clipboard.writeText(t.promptPay || t.bankAccount || ''); alert('คัดลอกเลขบัญชีแล้ว'); }} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition">
                           <Icon className="text-[18px]" name="content_copy"/> คัดลอกเลข
                         </button>
-                        
-                        {dateFilter === 'all' ? (
-                          <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
-                            <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
-                          </button>
-                        ) : (
-                          <button disabled className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-slate-100 text-slate-400 rounded-xl text-xs font-bold transition">
-                            <Icon className="text-[16px]" name="block"/> กรุณาดูยอดรวมเพื่อเคลียร์หนี้
-                          </button>
-                        )}
+                        <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
+                          <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
+                        </button>
                       </div>
                       
                       <div className="mt-4 bg-slate-50 rounded-xl border border-slate-200 p-3 flex flex-wrap items-center gap-3 text-xs">
