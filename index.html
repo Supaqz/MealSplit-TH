@@ -121,7 +121,7 @@
         return true;
       });
 
-      const effectiveSettled = dateFilter === 'all' ? safeSettled : [];
+      const effectiveSettled = safeSettled;
 
       const balances = {};
       safeFriends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
