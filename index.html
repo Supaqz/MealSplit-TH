@@ -121,7 +121,14 @@
         return true;
       });
 
-      const effectiveSettled = safeSettled;
+      // กรองยอดโอนเงินให้ตรงกับวันที่กำลังดู
+      const effectiveSettled = safeSettled.filter(s => {
+        if (dateFilter === 'all') return true; 
+        if (!s.targetDateScope || s.targetDateScope === 'all') return false;
+        if (dateFilter === 'day') return s.targetDateScope === customDate;
+        if (dateFilter === 'month') return s.targetDateScope.startsWith(customDate.slice(0, 7));
+        return false;
+      });
 
       const balances = {};
       safeFriends.forEach(f => balances[f.id] = { ...f, totalPaid: 0, totalOwed: 0, net: 0 });
@@ -194,6 +201,8 @@
       const processedPairs = new Set();
       let activeMealsSet = new Set();
 
+      const currentScope = dateFilter === 'day' ? customDate : (dateFilter === 'month' ? customDate.slice(0,7) : 'all');
+
       safeFriends.forEach(f1 => {
         safeFriends.forEach(f2 => {
           if (f1.id === f2.id) return;
@@ -255,7 +264,8 @@
               fromOwesToTotal, toOwesFromTotal,
               historyFromOwesTo, historyToOwesFrom,
               settledFromToTotal, settledToFromTotal,
-              historyCount: historyFromOwesTo.length + historyToOwesFrom.length
+              historyCount: historyFromOwesTo.length + historyToOwesFrom.length,
+              scope: currentScope // แนบวันที่ไปกับข้อมูลเคลียร์ยอด
             });
           }
         });
@@ -443,9 +453,14 @@
 
       const handleSettleDebt = (transfer, customAmount = null) => {
         const finalAmount = customAmount || transfer.amount;
+        const scope = transfer.scope || 'all'; // ดึงวันที่ของบิลที่กำลังเคลียร์
+        
         showConfirm('ยืนยันการเคลียร์ยอด', `ยืนยันการโอนเงินจำนวน ${finalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท ให้ ${transfer.toName} เรียบร้อยแล้วใช่หรือไม่?`, async () => {
           await db.collection('settled_debts').add({
-            fromId: transfer.fromId, toId: transfer.toId, amount: finalAmount,
+            fromId: transfer.fromId, 
+            toId: transfer.toId, 
+            amount: finalAmount,
+            targetDateScope: scope, // บันทึกวันที่ผูกกับยอดโอน
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           closeModal('payment');
@@ -683,7 +698,6 @@
       return (
         <div className="space-y-6 animate-fade-in pb-10">
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4">
-            {/* ตัวเลือกช่วงเวลา */}
             <div className="flex-1">
               <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2 pl-1">
                 <Icon className="text-indigo-600 text-sm" name="calendar_today"/> เลือกช่วงเวลา:
@@ -699,7 +713,6 @@
               </div>
             </div>
 
-            {/* ตัวเลือกหมวดหมู่ */}
             <div className="flex-1 md:border-l md:border-slate-100 md:pl-4">
               <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2 pl-1">
                 <Icon className="text-indigo-600 text-sm" name="tune"/> กรองประเภท:
@@ -735,8 +748,8 @@
             <div className="bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-xl text-xs font-bold flex items-start gap-2 shadow-sm">
               <Icon name="info" className="text-lg shrink-0"/> 
               <div>
-                <span className="text-blue-800">มุมมองรายวัน:</span> ระบบจะแสดงเฉพาะยอดตั้งต้นที่เกิดขึ้นในวันนั้นๆ 
-                <br/><span className="font-medium text-blue-600 mt-1 block">หากกด <b>"เคลียร์แล้ว"</b> ในหน้านี้ ยอดเงินที่คุณกรอกจะถูกนำไปหักลบออกจากยอดหนี้สะสมหลักให้โดยอัตโนมัติ</span>
+                <span className="text-blue-800">มุมมองรายวัน:</span> ระบบกำลังแสดงและคำนวณเฉพาะยอดที่เกิดขึ้นในวันที่เลือก 
+                <br/><span className="font-medium text-blue-600 mt-1 block">หากคุณกด <b>"เคลียร์แล้ว"</b> ในหน้านี้ ยอดจะถูกหักลบออกจากบิลของวันนี้ให้ทันที และยอดรวมสะสมก็จะลดลงด้วยเช่นกัน</span>
               </div>
             </div>
           )}
@@ -815,6 +828,8 @@
                         <button onClick={() => { navigator.clipboard.writeText(t.promptPay || t.bankAccount || ''); alert('คัดลอกเลขบัญชีแล้ว'); }} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition">
                           <Icon className="text-[18px]" name="content_copy"/> คัดลอกเลข
                         </button>
+                        
+                        {/* ปลดล็อคปุ่มเคลียร์แล้วให้แสดงเสมอ */}
                         <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
                           <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
                         </button>
