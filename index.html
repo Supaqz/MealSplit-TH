@@ -1984,7 +1984,7 @@
       const [dateScope, setDateScope] = useState('all');
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
       const [netMode, setNetMode] = useState('all');
-      const [isDownloading, setIsDownloading] = useState(false); // เพิ่ม State สำหรับโหลด
+      const [isDownloading, setIsDownloading] = useState(false); 
 
       const currentMonthStr = new Date().toISOString().slice(0, 7);
       
@@ -1997,15 +1997,12 @@
           const element = summaryRef.current;
           const parent = element.parentElement;
           
-          // 1. จำค่า CSS เดิมของกรอบที่มี Scrollbar ไว้
           const origMaxHeight = parent.style.maxHeight;
           const origOverflow = parent.style.overflow;
           
-          // 2. ปลดล็อคความสูงให้เนื้อหากางออกเต็ม 100% (เพื่อถ่ายรูป)
           parent.style.maxHeight = 'none';
           parent.style.overflow = 'visible';
           
-          // รอให้หน้าเว็บอัปเดตการแสดงผลแป๊บเดียว
           await new Promise(r => setTimeout(r, 150));
 
           try {
@@ -2023,7 +2020,6 @@
             console.error('Export Error:', error);
             alert('เกิดข้อผิดพลาดในการบันทึกรูปภาพ');
           } finally {
-            // 3. คืนค่า CSS ให้กลับมามี Scrollbar เหมือนเดิม
             parent.style.maxHeight = origMaxHeight;
             parent.style.overflow = origOverflow;
             setIsDownloading(false);
@@ -2060,6 +2056,8 @@
 
             <div className="max-h-[50vh] overflow-y-auto w-full flex justify-center pb-4 hide-scrollbar">
               <div ref={summaryRef} className={`w-full max-w-sm p-6 sm:p-8 shadow-lg rounded-3xl ${style === 'notebook' ? 'bg-notebook border-2 border-amber-200 font-sans' : 'bg-white border border-slate-200 font-sans'}`}>
+                
+                {/* ส่วนหัวสรุปยอด */}
                 <div className="text-center border-b border-dashed border-slate-300 pb-5 mb-5">
                   <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
                   <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
@@ -2067,7 +2065,8 @@
                   {dateScope === 'day' && <p className="text-[10px] font-bold text-indigo-600 mt-1">ประจำวันที่: {selectedDate}</p>}
                 </div>
 
-                <div className="space-y-2 mb-6">
+                {/* รายการโอนเงิน (เหลือแค่นี้ตามรูป) */}
+                <div className="space-y-2">
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="text-xs font-bold text-slate-800">📌 ยอดที่ต้องโอนจริง <span className="text-slate-500 font-normal">(หักลบแล้ว)</span>:</h3>
                     <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">โอนสุทธิ</span>
@@ -2084,36 +2083,8 @@
                   {settlementData.transfers.length === 0 && <div className="text-center text-xs font-bold text-emerald-600 py-3 bg-emerald-50 rounded-xl border border-emerald-200">✅ ไม่มีหนี้ค้างชำระ</div>}
                 </div>
 
-                <div className="space-y-3 mb-6 border-t border-dashed border-slate-300 pt-5">
-                  <h3 className="text-xs font-bold text-slate-800 mb-2">📌 รายละเอียดการออกเงินรายมื้อ:</h3>
-                  {settlementData.activeMealsList.map((m, i) => {
-                    const mealPayers = (m.payers && m.payers.length > 0) ? m.payers : [{ friendId: m.payerId }];
-                    const payerName = mealPayers.map(p => friends.find(f => f.id === p.friendId)?.name || '?').join(', ');
-                    const perPerson = m.finalAmount / m.participants.length;
-                    return (
-                      <div key={i} className={`p-3.5 rounded-xl border ${style === 'notebook' ? 'bg-white border-amber-200 shadow-sm' : 'bg-slate-50 border-slate-100'} text-[11px]`}>
-                        <div className="flex justify-between font-bold text-slate-800 mb-1.5">
-                          <span className="truncate pr-2">• {m.title}</span>
-                          <span className="font-mono text-indigo-700 shrink-0">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
-                        </div>
-                        <div className="flex justify-between text-slate-500">
-                          <span className="truncate pr-2">จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
-                          <span className="shrink-0">(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {settlementData.activeMealsList.length === 0 && <div className="text-xs text-slate-400">ไม่มีรายการ</div>}
-                </div>
-
-                <div className="border-t border-dashed border-slate-300 pt-4 text-[11px] text-slate-600 space-y-1">
-                  <div className="font-bold text-slate-800 mb-1.5 flex items-center gap-1"><Icon className="text-[14px]" name="account_balance_wallet"/> บัญชีพร้อมเพย์สำหรับโอน:</div>
-                  {friends.map(f => f.promptPay ? (
-                    <div key={f.id} className="flex justify-between font-mono"><span>{f.name}:</span> <strong>{f.promptPay}</strong></div>
-                  ) : null)}
-                </div>
-
-                <div className="mt-8 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
+                {/* ลายน้ำด้านล่างสุด */}
+                <div className="mt-6 border-t border-dashed border-slate-300 pt-4 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
               </div>
             </div>
 
@@ -2129,7 +2100,7 @@
             </div>
           </div>
         </Modal>
-      )
+      );
     }
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
