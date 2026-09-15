@@ -1984,6 +1984,7 @@
       const [dateScope, setDateScope] = useState('all');
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
       const [netMode, setNetMode] = useState('all');
+      const [isDownloading, setIsDownloading] = useState(false); // เพิ่ม State สำหรับโหลด
 
       const currentMonthStr = new Date().toISOString().slice(0, 7);
       
@@ -1992,9 +1993,41 @@
 
       const handleDownload = async () => {
         if (summaryRef.current) {
-          const canvas = await html2canvas(summaryRef.current, { scale: 2, backgroundColor: style === 'notebook' ? '#f8fafc' : '#ffffff' });
-          const link = document.createElement('a'); link.download = `สรุปยอดหารค่าข้าว_${new Date().toISOString().split('T')[0]}.png`;
-          link.href = canvas.toDataURL(); link.click();
+          setIsDownloading(true);
+          const element = summaryRef.current;
+          const parent = element.parentElement;
+          
+          // 1. จำค่า CSS เดิมของกรอบที่มี Scrollbar ไว้
+          const origMaxHeight = parent.style.maxHeight;
+          const origOverflow = parent.style.overflow;
+          
+          // 2. ปลดล็อคความสูงให้เนื้อหากางออกเต็ม 100% (เพื่อถ่ายรูป)
+          parent.style.maxHeight = 'none';
+          parent.style.overflow = 'visible';
+          
+          // รอให้หน้าเว็บอัปเดตการแสดงผลแป๊บเดียว
+          await new Promise(r => setTimeout(r, 150));
+
+          try {
+            const canvas = await html2canvas(element, { 
+              scale: 2, 
+              backgroundColor: style === 'notebook' ? '#f8fafc' : '#ffffff',
+              useCORS: true,
+              scrollY: -window.scrollY
+            });
+            const link = document.createElement('a'); 
+            link.download = `สรุปยอดหารค่าข้าว_${new Date().toISOString().split('T')[0]}.png`;
+            link.href = canvas.toDataURL('image/png'); 
+            link.click();
+          } catch (error) {
+            console.error('Export Error:', error);
+            alert('เกิดข้อผิดพลาดในการบันทึกรูปภาพ');
+          } finally {
+            // 3. คืนค่า CSS ให้กลับมามี Scrollbar เหมือนเดิม
+            parent.style.maxHeight = origMaxHeight;
+            parent.style.overflow = origOverflow;
+            setIsDownloading(false);
+          }
         }
       };
 
@@ -2064,8 +2097,8 @@
                           <span className="font-mono text-indigo-700 shrink-0">{m.finalAmount.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</span>
                         </div>
                         <div className="flex justify-between text-slate-500">
-                          <span>จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
-                          <span>(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
+                          <span className="truncate pr-2">จ่ายโดย: <strong className="text-slate-700">{payerName}</strong></span>
+                          <span className="shrink-0">(คนละ {perPerson.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿)</span>
                         </div>
                       </div>
                     )
@@ -2085,16 +2118,19 @@
             </div>
 
             <div className="w-full flex gap-3 mt-4">
-              <button onClick={onClose} className="px-6 py-3.5 rounded-xl border border-slate-300 font-bold text-sm text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm">ปิด</button>
-              <button onClick={handleDownload} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition">
-                <Icon name="file_download"/> ดาวน์โหลดรูปภาพ
+              <button onClick={onClose} disabled={isDownloading} className="px-6 py-3.5 rounded-xl border border-slate-300 font-bold text-sm text-slate-700 bg-white hover:bg-slate-50 transition shadow-sm disabled:opacity-50">ปิด</button>
+              <button onClick={handleDownload} disabled={isDownloading} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 transition disabled:opacity-70 disabled:cursor-not-allowed">
+                {isDownloading ? (
+                  <><Icon className="animate-spin text-[18px]" name="sync"/> กำลังสร้างรูปภาพ...</>
+                ) : (
+                  <><Icon name="file_download"/> ดาวน์โหลดรูปภาพ</>
+                )}
               </button>
             </div>
           </div>
         </Modal>
       )
     }
-
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
