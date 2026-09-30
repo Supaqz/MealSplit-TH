@@ -121,7 +121,6 @@
         return true;
       });
 
-      // กรองยอดโอนเงินให้ตรงกับวันที่กำลังดู
       const effectiveSettled = safeSettled.filter(s => {
         if (dateFilter === 'all') return true; 
         if (!s.targetDateScope || s.targetDateScope === 'all') return false;
@@ -265,7 +264,7 @@
               historyFromOwesTo, historyToOwesFrom,
               settledFromToTotal, settledToFromTotal,
               historyCount: historyFromOwesTo.length + historyToOwesFrom.length,
-              scope: currentScope // แนบวันที่ไปกับข้อมูลเคลียร์ยอด
+              scope: currentScope
             });
           }
         });
@@ -354,12 +353,13 @@
       const [settledDebts, setSettledDebts] = useState([]);
       const [isLoading, setIsLoading] = useState(true);
 
-      const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, lineShare: false, viewMeal: false, payment: false });
+      const [modals, setModals] = useState({ addMeal: false, addDebt: false, addFriend: false, qr: false, category: false, export: false, lineShare: false, viewMeal: false, payment: false, settledHistory: false, friendDetail: false });
       const [selectedTransfer, setSelectedTransfer] = useState(null);
       const [editingMeal, setEditingMeal] = useState(null);
       const [editingDebt, setEditingDebt] = useState(null);
       const [editingFriend, setEditingFriend] = useState(null);
       const [viewingMeal, setViewingMeal] = useState(null);
+      const [viewingFriendId, setViewingFriendId] = useState(null);
 
       const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, title: '', message: '', onConfirm: null, confirmText: 'ยืนยัน', confirmColor: 'bg-rose-600 hover:bg-rose-700' });
       const showConfirm = (title, message, onConfirm, confirmText = 'ยืนยัน', confirmColor = 'bg-rose-600 hover:bg-rose-700') => {
@@ -396,6 +396,7 @@
         if (name === 'addDebt') setEditingDebt(data);
         if (name === 'addFriend') setEditingFriend(data);
         if (name === 'viewMeal') setViewingMeal(data);
+        if (name === 'friendDetail') setViewingFriendId(data);
         setModals(prev => ({ ...prev, [name]: true }));
       };
       const closeModal = (name) => {
@@ -453,19 +454,26 @@
 
       const handleSettleDebt = (transfer, customAmount = null) => {
         const finalAmount = customAmount || transfer.amount;
-        const scope = transfer.scope || 'all'; // ดึงวันที่ของบิลที่กำลังเคลียร์
+        const scope = transfer.scope || 'all'; 
         
         showConfirm('ยืนยันการเคลียร์ยอด', `ยืนยันการโอนเงินจำนวน ${finalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})} บาท ให้ ${transfer.toName} เรียบร้อยแล้วใช่หรือไม่?`, async () => {
           await db.collection('settled_debts').add({
             fromId: transfer.fromId, 
             toId: transfer.toId, 
             amount: finalAmount,
-            targetDateScope: scope, // บันทึกวันที่ผูกกับยอดโอน
+            targetDateScope: scope,
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
           });
           closeModal('payment');
           closeModal('qr');
         }, 'โอนเสร็จแล้ว เคลียร์เลย', 'bg-emerald-600 hover:bg-emerald-700');
+      };
+
+      const deleteSettledDebt = (id) => {
+        showConfirm('ยกเลิกการเคลียร์ยอด', 'ต้องการลบประวัติการโอนนี้ใช่หรือไม่? ยอดเงินจะถูกนำกลับไปคำนวณเป็นหนี้ใหม่อีกครั้ง', async () => {
+          await db.collection('settled_debts').doc(id).delete();
+          closeModal('settledHistory');
+        }, 'ยกเลิกรายการนี้', 'bg-rose-600 hover:bg-rose-700');
       };
 
       const handleEditItem = (m) => {
@@ -479,8 +487,6 @@
         else openModal('addMeal', copyData);
       };
 
-      const settleData = useMemo(() => calculateSettlement(meals, friends, settledDebts), [meals, friends, settledDebts]);
-
       if (isLoading) return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold flex-col gap-4"><Icon name="sync" className="animate-spin text-4xl"/> กำลังโหลดข้อมูล...</div>;
 
       return (
@@ -493,7 +499,6 @@
                 <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-md"><Icon name="receipt_long"/></div>
                 <div>
                   <h1 className="font-bold text-slate-800 text-lg flex items-center gap-2">MealSplit <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded-full">ระบบหักลบหนี้</span></h1>
-                  <p className="text-[11px] text-slate-500 hidden sm:block">หักลบหนี้ & สรุปยอด • ยอดที่ต้องเคลียร์ {settleData.activeTotalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</p>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -570,6 +575,8 @@
                   onOpenQR={(data) => openModal('qr', data)} 
                   exportToImage={() => openModal('export')} 
                   shareToLine={() => openModal('lineShare')} 
+                  onOpenHistory={() => openModal('settledHistory')}
+                  onOpenFriendDetail={(id) => openModal('friendDetail', id)}
                 />
               )}
               {activeTab === 'calendar' && (
@@ -665,6 +672,8 @@
           <ImageExportModal isOpen={modals.export} onClose={() => closeModal('export')} meals={meals} friends={friends} settledDebts={settledDebts} />
           <LineShareModal isOpen={modals.lineShare} onClose={() => closeModal('lineShare')} meals={meals} friends={friends} settledDebts={settledDebts} />
           <PaymentModal isOpen={modals.payment} onClose={() => closeModal('payment')} transfer={selectedTransfer} onConfirm={handleSettleDebt} />
+          <SettledHistoryModal isOpen={modals.settledHistory} onClose={() => closeModal('settledHistory')} settledDebts={settledDebts} friends={friends} onDelete={deleteSettledDebt} />
+          <FriendDetailModal isOpen={modals.friendDetail} onClose={() => closeModal('friendDetail')} friendId={viewingFriendId} friends={friends} meals={meals} />
 
           <ViewMealModal isOpen={modals.viewMeal} onClose={() => closeModal('viewMeal')} meal={viewingMeal} friends={friends} categories={categories}
             onEdit={() => { closeModal('viewMeal'); handleEditItem(viewingMeal); }}
@@ -687,7 +696,7 @@
     // ==========================================
     // 6. EXTRA COMPONENTS
     // ==========================================
-    function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenPayment, onOpenQR, exportToImage, shareToLine }) {
+    function SettlementView({ meals, friends, settledDebts, onSettleDebt, onOpenPayment, onOpenQR, exportToImage, shareToLine, onOpenHistory, onOpenFriendDetail }) {
       const [expandedId, setExpandedId] = useState(null);
       const [netMode, setNetMode] = useState('all'); 
       const [dateFilter, setDateFilter] = useState('all');
@@ -697,6 +706,12 @@
 
       return (
         <div className="space-y-6 animate-fade-in pb-10">
+          <div className="flex justify-end">
+             <button onClick={onOpenHistory} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold shadow-sm hover:bg-slate-50 flex items-center gap-2 transition">
+               <Icon name="history" className="text-[16px]"/> ประวัติการโอนคืน / แก้ไขยอด
+             </button>
+          </div>
+          
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4">
             <div className="flex-1">
               <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2 pl-1">
@@ -828,8 +843,6 @@
                         <button onClick={() => { navigator.clipboard.writeText(t.promptPay || t.bankAccount || ''); alert('คัดลอกเลขบัญชีแล้ว'); }} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-5 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition">
                           <Icon className="text-[18px]" name="content_copy"/> คัดลอกเลข
                         </button>
-                        
-                        {/* ปลดล็อคปุ่มเคลียร์แล้วให้แสดงเสมอ */}
                         <button onClick={() => onOpenPayment(t)} className="w-full md:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-md shadow-emerald-100 transition">
                           <Icon className="text-[18px]" name="check_circle"/> เคลียร์แล้ว
                         </button>
@@ -915,25 +928,28 @@
                 const isPositive = b.net > 0.01;
                 const isNegative = b.net < -0.01;
                 return (
-                  <div key={f.id} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 hover:bg-white hover:shadow-md transition">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className={`w-8 h-8 rounded-full text-white font-bold flex items-center justify-center text-xs shadow-inner ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
-                        <span className="font-bold text-slate-800 text-sm">{f.name}</span>
+                  <div key={f.id} onClick={() => onOpenFriendDetail(f.id)} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 hover:bg-white hover:shadow-md hover:border-indigo-300 transition cursor-pointer relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-indigo-50/0 group-hover:bg-indigo-50/50 transition z-0"></div>
+                    <div className="relative z-10">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-8 h-8 rounded-full text-white font-bold flex items-center justify-center text-xs shadow-inner ${f.color || 'bg-slate-500'}`}>{f.name.charAt(0)}</div>
+                          <span className="font-bold text-slate-800 text-sm">{f.name}</span>
+                        </div>
+                        <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isPositive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : isNegative ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                          {isPositive ? 'ได้รับคืน' : isNegative ? 'ต้องจ่ายออก' : 'ลงตัว'}
+                        </span>
                       </div>
-                      <span className={`text-[9px] font-bold px-2 py-1 rounded border ${isPositive ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : isNegative ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                        {isPositive ? 'ได้รับคืน' : isNegative ? 'ต้องจ่ายออก' : 'ลงตัว'}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 mb-3 border-y border-slate-100 py-2">
-                      <div><span className="block mb-0.5">ออกเงินไป</span><strong className="font-mono text-slate-700 text-xs">{b.totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</strong></div>
-                      <div><span className="block mb-0.5">กิน/ใช้ไป</span><strong className="font-mono text-slate-700 text-xs">{b.totalOwed.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</strong></div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">ยอดสุทธิ:</span>
-                      <span className={`font-mono font-extrabold text-sm ${isPositive ? 'text-emerald-600' : isNegative ? 'text-rose-600' : 'text-slate-700'}`}>
-                        {isPositive ? '+' : ''}{b.net.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿
-                      </span>
+                      <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 mb-3 border-y border-slate-100 py-2">
+                        <div><span className="block mb-0.5">ออกเงินไป</span><strong className="font-mono text-slate-700 text-xs">{b.totalPaid.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</strong></div>
+                        <div><span className="block mb-0.5">กิน/ใช้ไป</span><strong className="font-mono text-slate-700 text-xs">{b.totalOwed.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿</strong></div>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-medium">ยอดสุทธิ:</span>
+                        <span className={`font-mono font-extrabold text-sm ${isPositive ? 'text-emerald-600' : isNegative ? 'text-rose-600' : 'text-slate-700'}`}>
+                          {isPositive ? '+' : ''}{b.net.toLocaleString('th-TH', {minimumFractionDigits:2})} ฿
+                        </span>
+                      </div>
                     </div>
                   </div>
                 )
@@ -1034,7 +1050,7 @@
                   <div className="flex-1 overflow-y-auto pr-1 space-y-3 hide-scrollbar">
                     {selectedMeals.length === 0 ? (
                       <div className="bg-white border-2 border-dashed border-slate-200 rounded-xl p-6 text-center text-slate-400 flex flex-col items-center justify-center h-full min-h-[150px]">
-                        <span className="text-3xl mb-2">🍽️</span><p className="font-bold text-sm text-slate-600">ไม่มีรายการในวันนี้</p><p className="text-[10px] mt-1">คลิกปุ่ม "เพิ่มมื้อ" เพื่อบันทึกบิล</p>
+                        <span className="text-3xl mb-2">🍽️️</span><p className="font-bold text-sm text-slate-600">ไม่มีรายการในวันนี้</p><p className="text-[10px] mt-1">คลิกปุ่ม "เพิ่มมื้อ" เพื่อบันทึกบิล</p>
                       </div>
                     ) : (
                       selectedMeals.map(m => {
@@ -1406,7 +1422,7 @@
             <div className="flex gap-3 pt-2">
               <button type="button" onClick={onClose} className="w-1/3 bg-white border border-slate-300 text-slate-700 font-bold py-3.5 rounded-xl text-sm hover:bg-slate-50 transition">ยกเลิก</button>
               <button disabled={!amount || !creditorId} type="submit" className="w-2/3 bg-rose-600 text-white font-bold py-3.5 rounded-xl text-sm shadow-md hover:bg-rose-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
-                <Icon className="text-[18px]" name="check_circle"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันหนี้ค้าง'}
+                <Icon className="text-[18px]" name="check_circle"/> {initialData?.id ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ค้าง'}
               </button>
             </div>
           </form>
@@ -1888,6 +1904,105 @@
       )
     }
 
+    function SettledHistoryModal({ isOpen, onClose, settledDebts, friends, onDelete }) {
+      if (!isOpen) return null;
+      
+      const sortedHistory = [...settledDebts].sort((a, b) => {
+        const timeA = a.createdAt ? a.createdAt.toMillis() : Date.now();
+        const timeB = b.createdAt ? b.createdAt.toMillis() : Date.now();
+        return timeB - timeA;
+      });
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="ประวัติการโอนเงินคืน (เคลียร์ยอด)" fullWidth>
+          <div className="p-5 sm:p-6 bg-slate-50 min-h-[50vh] max-h-[70vh] overflow-y-auto">
+            {sortedHistory.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 font-medium">ยังไม่มีประวัติการเคลียร์ยอด</div>
+            ) : (
+              <div className="space-y-3">
+                {sortedHistory.map(s => {
+                  const fromF = friends.find(f => f.id === s.fromId);
+                  const toF = friends.find(f => f.id === s.toId);
+                  const dateStr = s.createdAt ? new Date(s.createdAt.toDate()).toLocaleString('th-TH') : 'กำลังบันทึก...';
+                  
+                  return (
+                    <div key={s.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] text-slate-400 font-mono mb-1">{dateStr} {s.targetDateScope && s.targetDateScope !== 'all' && <span className="bg-indigo-50 text-indigo-600 px-1.5 rounded ml-1">เฉพาะบิล {s.targetDateScope}</span>}</div>
+                        <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
+                          <span className="text-rose-600">{fromF?.name || 'Unknown'}</span>
+                          <Icon name="arrow_forward" className="text-[14px] text-slate-300"/>
+                          <span className="text-emerald-600">{toF?.name || 'Unknown'}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between sm:justify-end gap-4 border-t sm:border-0 border-slate-100 pt-3 sm:pt-0">
+                        <span className="font-mono font-extrabold text-lg text-slate-800">{s.amount.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span>
+                        <button onClick={() => onDelete(s.id)} className="text-[11px] bg-rose-50 text-rose-600 px-3 py-1.5 rounded-lg font-bold hover:bg-rose-100 flex items-center gap-1 transition">
+                          <Icon name="undo" className="text-[14px]"/> ยกเลิกยอดนี้
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </Modal>
+      );
+    }
+
+    function FriendDetailModal({ isOpen, onClose, friendId, friends, meals }) {
+      if (!isOpen || !friendId) return null;
+      
+      const friend = friends.find(f => f.id === friendId);
+      
+      const paidMeals = meals.filter(m => {
+        const mPayers = (m.payers && m.payers.length > 0) ? m.payers : [{ friendId: m.payerId }];
+        return mPayers.some(p => p.friendId === friendId);
+      });
+
+      const participatedMeals = meals.filter(m => m.participants && m.participants.some(p => p.friendId === friendId));
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title={`สมุดบัญชีของ: ${friend?.name}`} fullWidth>
+          <div className="p-5 sm:p-6 bg-slate-50 space-y-6">
+            
+            <div className="bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
+              <h3 className="text-xs font-bold text-indigo-700 mb-3 flex items-center gap-1.5"><Icon name="receipt_long" className="text-[16px]"/> รายการที่ออกเงินไป (เจ้าหนี้)</h3>
+              <div className="space-y-2 max-h-40 overflow-y-auto hide-scrollbar">
+                {paidMeals.length === 0 ? <div className="text-xs text-slate-400">ไม่มีรายการ</div> : paidMeals.map(m => {
+                  const myShare = (m.payers && m.payers.length > 0) ? m.payers.find(p => p.friendId === friendId)?.amount : m.finalAmount;
+                  return (
+                    <div key={m.id} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg text-xs border border-slate-100">
+                      <div className="truncate pr-2"><span className="text-slate-400 font-mono text-[10px] mr-2">{m.date}</span><span className="font-bold text-slate-700">{m.title}</span></div>
+                      <span className="font-mono font-bold text-emerald-600 shrink-0">+{myShare?.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="bg-white p-4 rounded-xl border border-rose-200 shadow-sm">
+              <h3 className="text-xs font-bold text-rose-700 mb-3 flex items-center gap-1.5"><Icon name="restaurant" className="text-[16px]"/> รายการที่ไปกินมา (ลูกหนี้)</h3>
+              <div className="space-y-2 max-h-40 overflow-y-auto hide-scrollbar">
+                {participatedMeals.length === 0 ? <div className="text-xs text-slate-400">ไม่มีรายการ</div> : participatedMeals.map(m => {
+                  const myOwe = m.participants.find(p => p.friendId === friendId)?.amount || 0;
+                  return (
+                    <div key={m.id} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg text-xs border border-slate-100">
+                      <div className="truncate pr-2"><span className="text-slate-400 font-mono text-[10px] mr-2">{m.date}</span><span className="font-bold text-slate-700">{m.title}</span></div>
+                      <span className="font-mono font-bold text-rose-600 shrink-0">-{myOwe.toLocaleString('th-TH', {minimumFractionDigits: 2})} ฿</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <button onClick={onClose} className="w-full py-3 bg-white border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-100 transition shadow-sm">ปิดหน้าต่าง</button>
+          </div>
+        </Modal>
+      );
+    }
+
     function LineShareModal({ isOpen, onClose, meals, friends, settledDebts }) {
       const [dateScope, setDateScope] = useState('all');
       const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2056,8 +2171,6 @@
 
             <div className="max-h-[50vh] overflow-y-auto w-full flex justify-center pb-4 hide-scrollbar">
               <div ref={summaryRef} className={`w-full max-w-sm p-6 sm:p-8 shadow-lg rounded-3xl ${style === 'notebook' ? 'bg-notebook border-2 border-amber-200 font-sans' : 'bg-white border border-slate-200 font-sans'}`}>
-                
-                {/* ส่วนหัวสรุปยอด */}
                 <div className="text-center border-b border-dashed border-slate-300 pb-5 mb-5">
                   <div className={`inline-block px-3 py-1 rounded-full text-[10px] font-bold mb-3 ${style === 'notebook' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>📌 สรุปยอดหารค่าข้าว</div>
                   <h2 className="text-2xl font-extrabold text-slate-900">รายการสรุปโอนเงิน</h2>
@@ -2065,7 +2178,6 @@
                   {dateScope === 'day' && <p className="text-[10px] font-bold text-indigo-600 mt-1">ประจำวันที่: {selectedDate}</p>}
                 </div>
 
-                {/* รายการโอนเงิน (เหลือแค่นี้ตามรูป) */}
                 <div className="space-y-2">
                   <div className="flex justify-between items-center mb-3">
                     <h3 className="text-xs font-bold text-slate-800">📌 ยอดที่ต้องโอนจริง <span className="text-slate-500 font-normal">(หักลบแล้ว)</span>:</h3>
@@ -2083,7 +2195,6 @@
                   {settlementData.transfers.length === 0 && <div className="text-center text-xs font-bold text-emerald-600 py-3 bg-emerald-50 rounded-xl border border-emerald-200">✅ ไม่มีหนี้ค้างชำระ</div>}
                 </div>
 
-                {/* ลายน้ำด้านล่างสุด */}
                 <div className="mt-6 border-t border-dashed border-slate-300 pt-4 text-center text-[9px] text-slate-400 font-mono">สร้างด้วยระบบหารค่าข้าว MealSplit TH</div>
               </div>
             </div>
@@ -2102,6 +2213,7 @@
         </Modal>
       );
     }
+
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
